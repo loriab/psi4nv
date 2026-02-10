@@ -94,6 +94,8 @@ _programs = {
     "einsums": psi4.addons("einsums"),
     "gauxc": psi4.addons("gauxc"),
     "ooo": psi4.addons("ooo"),
+    "cuest": psi4.addons("cuest"),
+    "pycuest": which_import("cuest", return_bool=True),
 }
 
 

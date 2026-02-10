@@ -138,6 +138,17 @@ if(TARGET BrianQC::static_wrapper)
     )
 endif()
 
+if(TARGET cuEST::cuEST)
+  target_compile_definitions(core
+    PRIVATE
+      USING_cuEST
+    )
+  target_link_libraries(core
+    PRIVATE
+      cuEST::cuEST
+    )
+endif()
+
 if(TARGET IntegratorXX::IntegratorXX)
   target_link_libraries(core
     PRIVATE
