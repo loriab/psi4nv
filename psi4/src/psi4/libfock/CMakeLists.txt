@@ -1,6 +1,7 @@
 list(APPEND sources
   CDJK.cc
   CompositeJK.cc
+  cuESTJK.cc
   COSK.cc
   DirectDFJ.cc
   DirectJK.cc
@@ -68,5 +69,16 @@ if(TARGET BrianQC::static_wrapper)
   target_include_directories(fock
     PUBLIC
       $<TARGET_PROPERTY:BrianQC::static_wrapper,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()
+
+if(TARGET cuEST::cuEST)
+  target_compile_definitions(fock
+    PUBLIC
+      USING_cuEST
+    )
+  target_link_libraries(fock
+    PUBLIC
+      cuEST::cuEST
     )
 endif()

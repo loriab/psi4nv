@@ -1,0 +1,34 @@
+#! Water RHF using cuEST GPU-accelerated density-fitted J/K builds.
+#! Compares cuEST SCF_TYPE against standard DF reference energies.
+
+# Reference DF-HF energies obtained with SCF_TYPE DF on the same geometry.
+# cuEST uses the same density-fitting algorithm so results should match
+# to near machine precision.
+refenergy_sto3g  = -74.963127532314   #TEST
+refenergy_ccpvdz = -76.026751163491   #TEST
+
+molecule water {
+    symmetry c1
+    0 1
+    O  0.000000  0.000000  0.117369
+    H -0.756950  0.000000 -0.469476
+    H  0.756950  0.000000 -0.469476
+}
+
+# --- Test 1: RHF/STO-3G ---
+set = {
+    basis sto-3g
+    reference rhf
+    scf_type cuest
+    df_scf_guess False
+    e_convergence 1e-10
+}
+
+energy_sto3g = energy('scf')
+compare_values(refenergy_sto3g, energy_sto3g, 6, "cuEST RHF/STO-3G energy vs DF reference")  #TEST
+
+# --- Test 2: RHF/cc-pVDZ ---
+set basis cc-pVDZ
+
+energy_ccpvdz = energy('scf')
+compare_values(refenergy_ccpvdz, energy_ccpvdz, 6, "cuEST RHF/cc-pVDZ energy vs DF reference")  #TEST
