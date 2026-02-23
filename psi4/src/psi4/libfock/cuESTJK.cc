@@ -13,6 +13,7 @@
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/psi4-dec.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -261,9 +262,13 @@ void cuESTJK::preiterations() {
 }
 
 void cuESTJK::compute_JK() {
+    using clock = std::chrono::high_resolution_clock;
+    auto t_total_start = clock::now();
+
     int nbf = primary_->nbf();
     size_t nbf2_bytes = static_cast<size_t>(nbf) * nbf * sizeof(double);
 
+    auto t0 = clock::now();
     double* d_D = nullptr;
     double* d_J = nullptr;
     double* d_K = nullptr;
@@ -272,6 +277,7 @@ void cuESTJK::compute_JK() {
     cudaMalloc(reinterpret_cast<void**>(&d_D), nbf2_bytes);
     cudaMalloc(reinterpret_cast<void**>(&d_J), nbf2_bytes);
     cudaMalloc(reinterpret_cast<void**>(&d_K), nbf2_bytes);
+    auto t_alloc = clock::now();
 
     cuestWorkspaceDescriptor_t j_temp_desc = {};
     cuestWorkspaceDescriptor_t k_temp_desc = {};
@@ -303,13 +309,26 @@ void cuESTJK::compute_JK() {
 
     free_workspace(compute_temp_ws_);
     allocate_workspace(total_desc, compute_temp_ws_);
+    auto t_ws = clock::now();
+
+    double ms_J_compute = 0.0, ms_K_compute = 0.0;
+    double ms_memcpy_h2d = 0.0, ms_memcpy_d2h = 0.0;
+    double ms_transpose = 0.0;
 
     for (size_t N = 0; N < D_ao_.size(); N++) {
         if (do_J_) {
+            auto tc0 = clock::now();
             cudaMemcpy(d_D, D_ao_[N]->get_pointer(), nbf2_bytes, cudaMemcpyHostToDevice);
+            auto tc1 = clock::now();
             CHECK_CUEST(cuestDFCoulombCompute(
                 cuest_handle, cuest_df_plan_, &compute_temp_ws_, d_D, d_J));
+            cudaDeviceSynchronize();
+            auto tc2 = clock::now();
             cudaMemcpy(J_ao_[N]->get_pointer(), d_J, nbf2_bytes, cudaMemcpyDeviceToHost);
+            auto tc3 = clock::now();
+            ms_memcpy_h2d += std::chrono::duration<double, std::milli>(tc1 - tc0).count();
+            ms_J_compute += std::chrono::duration<double, std::milli>(tc2 - tc1).count();
+            ms_memcpy_d2h += std::chrono::duration<double, std::milli>(tc3 - tc2).count();
         }
 
         if (do_K_) {
@@ -317,6 +336,7 @@ void cuESTJK::compute_JK() {
             if (nocc > 0) {
                 size_t c_bytes = static_cast<size_t>(nocc) * nbf * sizeof(double);
 
+                auto tt0 = clock::now();
                 std::vector<double> C_row_major(nocc * nbf);
                 double** Cp = C_left_ao_[N]->pointer();
                 for (int i = 0; i < nocc; i++) {
@@ -324,25 +344,50 @@ void cuESTJK::compute_JK() {
                         C_row_major[i * nbf + mu] = Cp[mu][i];
                     }
                 }
+                auto tt1 = clock::now();
+                ms_transpose += std::chrono::duration<double, std::milli>(tt1 - tt0).count();
 
                 cudaFree(d_C);
                 cudaMalloc(reinterpret_cast<void**>(&d_C), c_bytes);
+
+                auto tk0 = clock::now();
                 cudaMemcpy(d_C, C_row_major.data(), c_bytes, cudaMemcpyHostToDevice);
+                auto tk1 = clock::now();
 
                 CHECK_CUEST(cuestDFSymmetricExchangeCompute(
                     cuest_handle, cuest_df_plan_, &exchange_max_ws_desc_,
                     &compute_temp_ws_, static_cast<uint64_t>(nocc),
                     d_C, d_K));
+                cudaDeviceSynchronize();
+                auto tk2 = clock::now();
 
                 cudaMemcpy(K_ao_[N]->get_pointer(), d_K, nbf2_bytes, cudaMemcpyDeviceToHost);
+                auto tk3 = clock::now();
+
+                ms_memcpy_h2d += std::chrono::duration<double, std::milli>(tk1 - tk0).count();
+                ms_K_compute += std::chrono::duration<double, std::milli>(tk2 - tk1).count();
+                ms_memcpy_d2h += std::chrono::duration<double, std::milli>(tk3 - tk2).count();
             }
         }
     }
 
+    auto t_free_start = clock::now();
     cudaFree(d_D);
     cudaFree(d_J);
     cudaFree(d_K);
     if (d_C) cudaFree(d_C);
+    auto t_free_end = clock::now();
+
+    double ms_alloc = std::chrono::duration<double, std::milli>(t_alloc - t0).count();
+    double ms_wsquery = std::chrono::duration<double, std::milli>(t_ws - t_alloc).count();
+    double ms_free = std::chrono::duration<double, std::milli>(t_free_end - t_free_start).count();
+    double ms_total = std::chrono::duration<double, std::milli>(t_free_end - t_total_start).count();
+
+    outfile->Printf("    cuESTJK compute_JK: total=%7.2fms | alloc=%5.2fms ws=%5.2fms "
+                     "J=%6.2fms K=%6.2fms memcpy(H2D)=%5.2fms memcpy(D2H)=%5.2fms "
+                     "transpose=%5.2fms free=%5.2fms\n",
+                     ms_total, ms_alloc, ms_wsquery, ms_J_compute, ms_K_compute,
+                     ms_memcpy_h2d, ms_memcpy_d2h, ms_transpose, ms_free);
 }
 
 void cuESTJK::postiterations() {

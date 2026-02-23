@@ -28,6 +28,7 @@
 """
 The SCF iteration functions
 """
+import time
 import numpy as np
 
 from psi4 import core
@@ -257,7 +258,7 @@ def scf_initialize(self):
     is_dfjk = core.get_global_option('SCF_TYPE').endswith('DF')
     diis_rms = core.get_option('SCF', 'DIIS_RMS_ERROR')
     core.print_out("  ==> Iterations <==\n\n")
-    core.print_out("%s                        Total Energy        Delta E     %s |[F,P]|\n\n" %
+    core.print_out("%s                        Total Energy        Delta E     %s |[F,P]|    Wall\n\n" %
                    ("   " if is_dfjk else "", "RMS" if diis_rms else "MAX"))
 
 
@@ -351,6 +352,7 @@ def scf_iterate(self, e_conv=None, d_conv=None):
     Dnorm = 0.0
     scf_iter_post_screening = 0
     while True:
+        iter_t0 = time.perf_counter()
         self.iteration_ += 1
 
         diis_performed = False
@@ -557,10 +559,11 @@ def scf_iterate(self, e_conv=None, d_conv=None):
             self.Db().print_out()
 
         # Print out the iteration
+        iter_wall = time.perf_counter() - iter_t0
         core.print_out(
-            "   @%s%s iter %3s: %20.14f   %12.5e   %-11.5e %s\n" %
+            "   @%s%s iter %3s: %20.14f   %12.5e   %-11.5e %7.2fs %s\n" %
             ("DF-" if is_dfjk else "", reference, "SAD" if
-             ((self.iteration_ == 0) and self.sad_) else self.iteration_, SCFE, Ediff, Dnorm, '/'.join(status)))
+             ((self.iteration_ == 0) and self.sad_) else self.iteration_, SCFE, Ediff, Dnorm, iter_wall, '/'.join(status)))
 
         # if a an excited MOM is requested but not started, don't stop yet
         # Note that MOM_performed_ just checks initialization, and our convergence measures used the pre-MOM orbitals
