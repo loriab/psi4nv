@@ -2,9 +2,8 @@
 
 #ifdef USING_cuEST
 
-#include <cuda_runtime.h>
+#include "cuESTCommon.h"
 
-#include "psi4/libmints/basisset.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/integral.h"
@@ -16,23 +15,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <sstream>
 #include <vector>
 
-extern cuestHandle_t cuest_handle;
-
 namespace psi {
-
-static void check_cuest(cuestStatus_t status, const char* func) {
-    if (status != CUEST_STATUS_SUCCESS) {
-        std::ostringstream msg;
-        msg << "cuEST error in " << func << " (status code " << static_cast<int>(status) << ")";
-        throw PSIEXCEPTION(msg.str());
-    }
-}
-
-#define CHECK_CUEST(call) check_cuest((call), #call)
 
 cuESTJK::cuESTJK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options)
     : JK(primary),
@@ -57,92 +42,17 @@ cuESTJK::~cuESTJK() {
 }
 
 void cuESTJK::allocate_workspace(cuestWorkspaceDescriptor_t& desc, cuestWorkspace_t& ws) {
-    ws = {};
-    if (desc.hostBufferSizeInBytes > 0) {
-        ws.hostBuffer = reinterpret_cast<uintptr_t>(malloc(desc.hostBufferSizeInBytes));
-        ws.hostBufferSizeInBytes = desc.hostBufferSizeInBytes;
-    }
-    if (desc.deviceBufferSizeInBytes > 0) {
-        void* dev_ptr = nullptr;
-        cudaMalloc(&dev_ptr, desc.deviceBufferSizeInBytes);
-        ws.deviceBuffer = reinterpret_cast<uintptr_t>(dev_ptr);
-        ws.deviceBufferSizeInBytes = desc.deviceBufferSizeInBytes;
-    }
+    cuest_common::alloc_workspace(desc, ws);
 }
 
 void cuESTJK::free_workspace(cuestWorkspace_t& ws) {
-    if (ws.hostBuffer) {
-        free(reinterpret_cast<void*>(ws.hostBuffer));
-        ws.hostBuffer = 0;
-        ws.hostBufferSizeInBytes = 0;
-    }
-    if (ws.deviceBuffer) {
-        cudaFree(reinterpret_cast<void*>(ws.deviceBuffer));
-        ws.deviceBuffer = 0;
-        ws.deviceBufferSizeInBytes = 0;
-    }
+    cuest_common::free_workspace(ws);
 }
 
 cuestAOBasis_t cuESTJK::build_cuest_basis(std::shared_ptr<BasisSet> basis,
                                            std::vector<cuestAOShell_t>& shells_out,
                                            cuestWorkspace_t& persistent_ws) {
-    auto mol = basis->molecule();
-    int natom = mol->natom();
-
-    cuestAOShellParameters_t shell_params;
-    CHECK_CUEST(cuestParametersCreate(CUEST_AOSHELL_PARAMETERS, reinterpret_cast<void**>(&shell_params)));
-
-    shells_out.clear();
-    std::vector<uint64_t> shells_per_atom(natom);
-
-    for (int A = 0; A < natom; A++) {
-        int nshell_on_atom = basis->nshell_on_center(A);
-        shells_per_atom[A] = static_cast<uint64_t>(nshell_on_atom);
-
-        for (int Q = 0; Q < nshell_on_atom; Q++) {
-            int shell_idx = basis->shell_on_center(A, Q);
-            const auto& shell = basis->shell(shell_idx);
-
-            int32_t is_pure = shell.is_pure() ? 1 : 0;
-            uint64_t L = static_cast<uint64_t>(shell.am());
-            uint64_t nprim = static_cast<uint64_t>(shell.nprimitive());
-
-            cuestAOShell_t cuest_shell;
-            CHECK_CUEST(cuestAOShellCreate(
-                cuest_handle, is_pure, L, nprim,
-                shell.exps(), shell.coefs(),
-                shell_params, &cuest_shell));
-
-            shells_out.push_back(cuest_shell);
-        }
-    }
-
-    cuestParametersDestroy(CUEST_AOSHELL_PARAMETERS, shell_params);
-
-    cuestAOBasisParameters_t basis_params;
-    CHECK_CUEST(cuestParametersCreate(CUEST_AOBASIS_PARAMETERS, reinterpret_cast<void**>(&basis_params)));
-
-    cuestWorkspaceDescriptor_t persistent_desc = {}, temp_desc = {};
-    CHECK_CUEST(cuestAOBasisCreateWorkspaceQuery(
-        cuest_handle, static_cast<uint64_t>(natom), shells_per_atom.data(),
-        shells_out.data(), basis_params,
-        &persistent_desc, &temp_desc, nullptr));
-
-    allocate_workspace(persistent_desc, persistent_ws);
-
-    cuestWorkspace_t temp_ws = {};
-    allocate_workspace(temp_desc, temp_ws);
-
-    cuestAOBasis_t cuest_basis;
-    CHECK_CUEST(cuestAOBasisCreate(
-        cuest_handle, static_cast<uint64_t>(natom), shells_per_atom.data(),
-        shells_out.data(), basis_params,
-        &persistent_ws, &temp_ws, &cuest_basis));
-
-    free_workspace(temp_ws);
-    cuestParametersDestroy(CUEST_AOBASIS_PARAMETERS, basis_params);
-
-    return cuest_basis;
+    return cuest_common::build_cuest_basis(basis, shells_out, persistent_ws);
 }
 
 void cuESTJK::destroy_cuest_objects() {

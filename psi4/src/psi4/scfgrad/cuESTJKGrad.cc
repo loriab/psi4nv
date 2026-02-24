@@ -2,9 +2,7 @@
 
 #ifdef USING_cuEST
 
-#include <cuda_runtime.h>
-
-#include "psi4/libmints/basisset.h"
+#include "psi4/libfock/cuESTCommon.h"
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/mintshelper.h"
 #include "psi4/libmints/molecule.h"
@@ -12,108 +10,15 @@
 #include "psi4/libpsi4util/process.h"
 #include "psi4/psi4-dec.h"
 
-#include <cstdlib>
-#include <cstring>
-#include <sstream>
 #include <vector>
 
-extern cuestHandle_t cuest_handle;
+using psi::cuest_common::alloc_workspace;
+using psi::cuest_common::free_workspace;
+using psi::cuest_common::build_cuest_basis;
+using psi::cuest_common::build_cuest_pairlist;
 
 namespace psi {
 namespace scfgrad {
-
-static void check_cuest(cuestStatus_t status, const char* func) {
-    if (status != CUEST_STATUS_SUCCESS) {
-        std::ostringstream msg;
-        msg << "cuEST error in " << func << " (status code " << static_cast<int>(status) << ")";
-        throw PSIEXCEPTION(msg.str());
-    }
-}
-
-#define CHECK_CUEST(call) check_cuest((call), #call)
-
-static void alloc_workspace(cuestWorkspaceDescriptor_t& desc, cuestWorkspace_t& ws) {
-    ws = {};
-    if (desc.hostBufferSizeInBytes > 0) {
-        ws.hostBuffer = reinterpret_cast<uintptr_t>(malloc(desc.hostBufferSizeInBytes));
-        ws.hostBufferSizeInBytes = desc.hostBufferSizeInBytes;
-    }
-    if (desc.deviceBufferSizeInBytes > 0) {
-        void* dev_ptr = nullptr;
-        cudaMalloc(&dev_ptr, desc.deviceBufferSizeInBytes);
-        ws.deviceBuffer = reinterpret_cast<uintptr_t>(dev_ptr);
-        ws.deviceBufferSizeInBytes = desc.deviceBufferSizeInBytes;
-    }
-}
-
-static void free_workspace(cuestWorkspace_t& ws) {
-    if (ws.hostBuffer) {
-        free(reinterpret_cast<void*>(ws.hostBuffer));
-        ws.hostBuffer = 0;
-        ws.hostBufferSizeInBytes = 0;
-    }
-    if (ws.deviceBuffer) {
-        cudaFree(reinterpret_cast<void*>(ws.deviceBuffer));
-        ws.deviceBuffer = 0;
-        ws.deviceBufferSizeInBytes = 0;
-    }
-}
-
-static cuestAOBasis_t build_cuest_basis(std::shared_ptr<BasisSet> basis,
-                                        std::vector<cuestAOShell_t>& shells_out,
-                                        cuestWorkspace_t& persistent_ws) {
-    auto mol = basis->molecule();
-    int natom = mol->natom();
-
-    cuestAOShellParameters_t shell_params;
-    CHECK_CUEST(cuestParametersCreate(CUEST_AOSHELL_PARAMETERS, reinterpret_cast<void**>(&shell_params)));
-
-    shells_out.clear();
-    std::vector<uint64_t> shells_per_atom(natom);
-
-    for (int A = 0; A < natom; A++) {
-        int nshell_on_atom = basis->nshell_on_center(A);
-        shells_per_atom[A] = static_cast<uint64_t>(nshell_on_atom);
-
-        for (int Q = 0; Q < nshell_on_atom; Q++) {
-            int shell_idx = basis->shell_on_center(A, Q);
-            const auto& shell = basis->shell(shell_idx);
-
-            int32_t is_pure = shell.is_pure() ? 1 : 0;
-            uint64_t L = static_cast<uint64_t>(shell.am());
-            uint64_t nprim = static_cast<uint64_t>(shell.nprimitive());
-
-            cuestAOShell_t cuest_shell;
-            CHECK_CUEST(
-                cuestAOShellCreate(cuest_handle, is_pure, L, nprim, shell.exps(), shell.coefs(), shell_params, &cuest_shell));
-
-            shells_out.push_back(cuest_shell);
-        }
-    }
-
-    cuestParametersDestroy(CUEST_AOSHELL_PARAMETERS, shell_params);
-
-    cuestAOBasisParameters_t basis_params;
-    CHECK_CUEST(cuestParametersCreate(CUEST_AOBASIS_PARAMETERS, reinterpret_cast<void**>(&basis_params)));
-
-    cuestWorkspaceDescriptor_t persistent_desc = {}, temp_desc = {};
-    CHECK_CUEST(cuestAOBasisCreateWorkspaceQuery(cuest_handle, static_cast<uint64_t>(natom), shells_per_atom.data(),
-                                                 shells_out.data(), basis_params, &persistent_desc, &temp_desc, nullptr));
-
-    alloc_workspace(persistent_desc, persistent_ws);
-
-    cuestWorkspace_t temp_ws = {};
-    alloc_workspace(temp_desc, temp_ws);
-
-    cuestAOBasis_t cuest_basis;
-    CHECK_CUEST(cuestAOBasisCreate(cuest_handle, static_cast<uint64_t>(natom), shells_per_atom.data(), shells_out.data(),
-                                   basis_params, &persistent_ws, &temp_ws, &cuest_basis));
-
-    free_workspace(temp_ws);
-    cuestParametersDestroy(CUEST_AOBASIS_PARAMETERS, basis_params);
-
-    return cuest_basis;
-}
 
 cuESTJKGrad::cuESTJKGrad(int deriv, std::shared_ptr<MintsHelper> mints)
     : JKGrad(deriv, mints->get_basisset("ORBITAL")),
@@ -175,23 +80,8 @@ void cuESTJKGrad::compute_gradient() {
     }
 
     // Build pair list
-    cuestAOPairListParameters_t pair_params;
-    CHECK_CUEST(cuestParametersCreate(CUEST_AOPAIRLIST_PARAMETERS, reinterpret_cast<void**>(&pair_params)));
-
-    cuestWorkspaceDescriptor_t pair_p_desc = {}, pair_t_desc = {};
-    CHECK_CUEST(cuestAOPairListCreateWorkspaceQuery(cuest_handle, cuest_primary, static_cast<uint64_t>(natom), xyz.data(),
-                                                    cutoff_, pair_params, &pair_p_desc, &pair_t_desc, nullptr));
-
-    cuestWorkspace_t pair_persistent_ws = {}, pair_temp_ws = {};
-    alloc_workspace(pair_p_desc, pair_persistent_ws);
-    alloc_workspace(pair_t_desc, pair_temp_ws);
-
-    cuestAOPairList_t pair_list;
-    CHECK_CUEST(cuestAOPairListCreate(cuest_handle, cuest_primary, static_cast<uint64_t>(natom), xyz.data(), cutoff_,
-                                      pair_params, &pair_persistent_ws, &pair_temp_ws, &pair_list));
-
-    free_workspace(pair_temp_ws);
-    cuestParametersDestroy(CUEST_AOPAIRLIST_PARAMETERS, pair_params);
+    cuestWorkspace_t pair_persistent_ws = {};
+    cuestAOPairList_t pair_list = build_cuest_pairlist(cuest_primary, natom, xyz.data(), cutoff_, pair_persistent_ws);
 
     // Build DF plan (EXCHANGE_FRACTION defaults to 1.0)
     cuestDFIntPlanParameters_t df_params;

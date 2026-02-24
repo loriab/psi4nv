@@ -2,14 +2,13 @@
 Paxlovid Full GPU DFT Benchmark: cuEST GPU J/K + GPU XC
 ========================================================
 Tests B3LYP/STO-3G on Paxlovid (67 atoms) with:
-  - DF (CPU J/K + CPU XC) as reference
-  - CUEST (GPU J/K + CPU XC) - Phase 1 baseline
-  - CUEST+GPU_XC (GPU J/K + GPU XC) - Full GPU path
+  - DF (CPU) as reference
+  - CUEST (GPU J/K + GPU XC + GPU OE gradients)
 
 Compares energies, gradients, and wall times.
 
 Usage:
-    PSI4_CUEST_GPU_XC=1 conda run -n p4dev python bench_full_gpu_dft.py [--nthreads N]
+    conda run -n p4dev python bench_full_gpu_dft.py [--nthreads N]
 """
 
 import sys
@@ -122,21 +121,15 @@ print(f"  Basis: STO-3G")
 print(f"  CPU threads: {nthreads}")
 print("=" * 80)
 
-# Run 3 configurations for B3LYP
+# Run 2 configurations for B3LYP
 configs = [
-    ("DF (CPU J/K + CPU XC)", "DF", False),
-    ("CUEST (GPU J/K + CPU XC)", "CUEST", False),
-    ("CUEST+GPU_XC (GPU J/K + GPU XC)", "CUEST", True),
+    ("DF (CPU)", "DF"),
+    ("CUEST (Full GPU)", "CUEST"),
 ]
 
 results = {}
 
-for label, scf_type, gpu_xc in configs:
-    if gpu_xc:
-        os.environ['PSI4_CUEST_GPU_XC'] = '1'
-    elif 'PSI4_CUEST_GPU_XC' in os.environ:
-        del os.environ['PSI4_CUEST_GPU_XC']
-
+for label, scf_type in configs:
     print(f"\n--- {label} ---")
 
     # Energy
@@ -178,16 +171,16 @@ print("\n" + "=" * 80)
 print("COMPARISON")
 print("=" * 80)
 
-ref_label = "DF (CPU J/K + CPU XC)"
+ref_label = "DF (CPU)"
 e_ref = results[ref_label]["energy"]
 g_ref = results[ref_label]["grad"]
 
-for label in ["CUEST (GPU J/K + CPU XC)", "CUEST+GPU_XC (GPU J/K + GPU XC)"]:
-    e_delta = abs(results[label]["energy"] - e_ref)
-    g_delta = np.max(np.abs(results[label]["grad"] - g_ref))
-    print(f"\n{label}")
-    print(f"  Energy delta: {e_delta:.2e} Eh")
-    print(f"  Gradient max delta: {g_delta:.2e} Eh/Bohr")
+cuest_label = "CUEST (Full GPU)"
+e_delta = abs(results[cuest_label]["energy"] - e_ref)
+g_delta = np.max(np.abs(results[cuest_label]["grad"] - g_ref))
+print(f"\n{cuest_label} vs DF:")
+print(f"  Energy delta: {e_delta:.2e} Eh")
+print(f"  Gradient max delta: {g_delta:.2e} Eh/Bohr")
 
 # Timing summary
 print("\n" + "=" * 80)
@@ -197,13 +190,12 @@ print("=" * 80)
 t_ref_e = results[ref_label]["t_energy"]
 t_ref_g = results[ref_label]["t_grad"]
 
-for label in configs:
-    name = label[0]
-    te = results[name]["t_energy"]
-    tg = results[name]["t_grad"]
+for label, _ in configs:
+    te = results[label]["t_energy"]
+    tg = results[label]["t_grad"]
     se = t_ref_e / te if te > 0 else 0
     sg = t_ref_g / tg if tg > 0 else 0
-    print(f"  {name}")
+    print(f"  {label}")
     print(f"    Energy:   {te:8.2f}s  (speedup: {se:.2f}x)")
     print(f"    Gradient: {tg:8.2f}s  (speedup: {sg:.2f}x)")
 

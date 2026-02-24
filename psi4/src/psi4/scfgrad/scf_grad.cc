@@ -59,6 +59,14 @@
 
 #include "jk_grad.h"
 
+#ifdef USING_cuEST
+#include "psi4/libfock/cuESTCommon.h"
+using psi::cuest_common::alloc_workspace;
+using psi::cuest_common::free_workspace;
+using psi::cuest_common::build_cuest_basis;
+using psi::cuest_common::build_cuest_pairlist;
+#endif
+
 #ifdef USING_BrianQC
 
 #include <brian_types.h>
@@ -182,10 +190,200 @@ SharedMatrix SCFDeriv::compute_gradient()
 
     auto mints = std::make_shared<MintsHelper>(basisset_, options_);
 
-    // => V T Perturbation Gradients <= //
-    timer_on("Grad: V T Perturb");
-    gradients_["Core"] = mints->core_hamiltonian_grad(Dt);
-    timer_off("Grad: V T Perturb");
+    // Energy-weighted density matrix (needed by both CPU and GPU paths)
+    SharedMatrix W(Da->clone());
+    W->set_name("W");
+    {
+        auto tmp = Ca_occ->clone();
+        for (size_t i = 0; i < nalpha; i++) {
+            tmp->scale_column(0, i, eps_a_occ->get(i));
+        }
+        W->gemm(false, true, 1.0, tmp, Ca_occ, 0.0);
+
+        tmp->copy(Cb_occ);
+        for (size_t i = 0; i < nbeta; i++) {
+            tmp->scale_column(0, i, eps_b_occ->get(i));
+        }
+        W->gemm(false, true, 1.0, tmp, Cb_occ, 1.0);
+    }
+
+#ifdef USING_cuEST
+    if (options_.get_str("SCF_TYPE") == "CUEST") {
+        timer_on("Grad: V T Perturb (cuEST)");
+        timer_on("Grad: S (cuEST)");
+
+        int nbf = basisset_->nbf();
+        size_t nbf2_bytes = static_cast<size_t>(nbf) * nbf * sizeof(double);
+        size_t grad_bytes = static_cast<size_t>(natom) * 3 * sizeof(double);
+
+        // Build cuEST basis and pair list
+        std::vector<cuestAOShell_t> shells;
+        cuestWorkspace_t basis_ws = {};
+        cuestAOBasis_t cuest_basis = build_cuest_basis(basisset_, shells, basis_ws);
+
+        std::vector<double> xyz(natom * 3);
+        for (int A = 0; A < natom; A++) {
+            xyz[3 * A + 0] = molecule_->x(A);
+            xyz[3 * A + 1] = molecule_->y(A);
+            xyz[3 * A + 2] = molecule_->z(A);
+        }
+
+        double cutoff = 0.0;
+        cuestWorkspace_t pair_ws = {};
+        cuestAOPairList_t pair_list = build_cuest_pairlist(cuest_basis, natom, xyz.data(), cutoff, pair_ws);
+
+        // Build OE integral plan
+        cuestOEIntPlanParameters_t oe_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_OEINTPLAN_PARAMETERS, reinterpret_cast<void**>(&oe_params)));
+
+        cuestWorkspaceDescriptor_t oe_p_desc = {}, oe_t_desc = {};
+        CHECK_CUEST(cuestOEIntPlanCreateWorkspaceQuery(cuest_handle, cuest_basis, pair_list,
+            oe_params, &oe_p_desc, &oe_t_desc, nullptr));
+
+        cuestWorkspace_t oe_persistent_ws = {};
+        alloc_workspace(oe_p_desc, oe_persistent_ws);
+        cuestWorkspace_t oe_create_tmp = {};
+        alloc_workspace(oe_t_desc, oe_create_tmp);
+
+        cuestOEIntPlan_t oe_plan;
+        CHECK_CUEST(cuestOEIntPlanCreate(cuest_handle, cuest_basis, pair_list,
+            oe_params, &oe_persistent_ws, &oe_create_tmp, &oe_plan));
+        free_workspace(oe_create_tmp);
+        cuestParametersDestroy(CUEST_OEINTPLAN_PARAMETERS, oe_params);
+
+        // Upload density matrices to GPU
+        double* d_Dt = nullptr;
+        double* d_W = nullptr;
+        double* d_grad = nullptr;
+        double* d_grad2 = nullptr;
+        cudaMalloc(reinterpret_cast<void**>(&d_Dt), nbf2_bytes);
+        cudaMalloc(reinterpret_cast<void**>(&d_W), nbf2_bytes);
+        cudaMalloc(reinterpret_cast<void**>(&d_grad), grad_bytes);
+        cudaMalloc(reinterpret_cast<void**>(&d_grad2), grad_bytes);
+
+        cudaMemcpy(d_Dt, Dt->get_pointer(), nbf2_bytes, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_W, W->get_pointer(), nbf2_bytes, cudaMemcpyHostToDevice);
+
+        gradients_["Core"] = std::make_shared<Matrix>("Core Gradient", natom, 3);
+        gradients_["Overlap"] = std::make_shared<Matrix>("Overlap Gradient", natom, 3);
+        std::vector<double> grad_host(natom * 3);
+
+        // Kinetic gradient: Tr[Dt * dT/dR]
+        cuestWorkspaceDescriptor_t kin_t_desc = {};
+        CHECK_CUEST(cuestKineticDerivativeComputeWorkspaceQuery(
+            cuest_handle, oe_plan, &kin_t_desc, nullptr, nullptr));
+        cuestWorkspace_t kin_ws = {};
+        alloc_workspace(kin_t_desc, kin_ws);
+
+        CHECK_CUEST(cuestKineticDerivativeCompute(
+            cuest_handle, oe_plan, &kin_ws, d_Dt, d_grad));
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
+        double** Cp = gradients_["Core"]->pointer();
+        for (int A = 0; A < natom; A++) {
+            Cp[A][0] = grad_host[3 * A + 0];
+            Cp[A][1] = grad_host[3 * A + 1];
+            Cp[A][2] = grad_host[3 * A + 2];
+        }
+        free_workspace(kin_ws);
+
+        // Potential gradient: Tr[Dt * dV/dR], nuclear charges as point charges
+        std::vector<double> charges(natom);
+        for (int A = 0; A < natom; A++) {
+            charges[A] = static_cast<double>(molecule_->Z(A));
+        }
+
+        size_t xyz_bytes = static_cast<size_t>(natom) * 3 * sizeof(double);
+        size_t q_bytes = static_cast<size_t>(natom) * sizeof(double);
+        double* d_xyz = nullptr;
+        double* d_q = nullptr;
+        cudaMalloc(reinterpret_cast<void**>(&d_xyz), xyz_bytes);
+        cudaMalloc(reinterpret_cast<void**>(&d_q), q_bytes);
+        cudaMemcpy(d_xyz, xyz.data(), xyz_bytes, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_q, charges.data(), q_bytes, cudaMemcpyHostToDevice);
+
+        cuestWorkspaceDescriptor_t pot_t_desc = {};
+        CHECK_CUEST(cuestPotentialDerivativeComputeWorkspaceQuery(
+            cuest_handle, oe_plan, &pot_t_desc,
+            static_cast<uint64_t>(natom), nullptr, nullptr, nullptr, nullptr, nullptr));
+        cuestWorkspace_t pot_ws = {};
+        alloc_workspace(pot_t_desc, pot_ws);
+
+        CHECK_CUEST(cuestPotentialDerivativeCompute(
+            cuest_handle, oe_plan, &pot_ws,
+            static_cast<uint64_t>(natom), d_xyz, d_q,
+            d_Dt, d_grad, d_grad2));
+        cudaDeviceSynchronize();
+
+        // cuEST computes d/dR[sum q*integral] (positive Coulomb potential);
+        // QM nuclear attraction is V = -sum Z*integral, so negate both contributions
+        cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
+        for (int A = 0; A < natom; A++) {
+            Cp[A][0] -= grad_host[3 * A + 0];
+            Cp[A][1] -= grad_host[3 * A + 1];
+            Cp[A][2] -= grad_host[3 * A + 2];
+        }
+        cudaMemcpy(grad_host.data(), d_grad2, grad_bytes, cudaMemcpyDeviceToHost);
+        for (int A = 0; A < natom; A++) {
+            Cp[A][0] -= grad_host[3 * A + 0];
+            Cp[A][1] -= grad_host[3 * A + 1];
+            Cp[A][2] -= grad_host[3 * A + 2];
+        }
+        cudaFree(d_q);
+        cudaFree(d_xyz);
+        free_workspace(pot_ws);
+
+        // Overlap gradient: -Tr[W * dS/dR]
+        cuestWorkspaceDescriptor_t ovl_t_desc = {};
+        CHECK_CUEST(cuestOverlapDerivativeComputeWorkspaceQuery(
+            cuest_handle, oe_plan, &ovl_t_desc, nullptr, nullptr));
+        cuestWorkspace_t ovl_ws = {};
+        alloc_workspace(ovl_t_desc, ovl_ws);
+
+        CHECK_CUEST(cuestOverlapDerivativeCompute(
+            cuest_handle, oe_plan, &ovl_ws, d_W, d_grad));
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
+        double** Sp = gradients_["Overlap"]->pointer();
+        for (int A = 0; A < natom; A++) {
+            Sp[A][0] = -grad_host[3 * A + 0];
+            Sp[A][1] = -grad_host[3 * A + 1];
+            Sp[A][2] = -grad_host[3 * A + 2];
+        }
+        free_workspace(ovl_ws);
+
+        // Cleanup
+        cudaFree(d_grad2);
+        cudaFree(d_grad);
+        cudaFree(d_W);
+        cudaFree(d_Dt);
+
+        cuestOEIntPlanDestroy(oe_plan);
+        free_workspace(oe_persistent_ws);
+        cuestAOPairListDestroy(pair_list);
+        free_workspace(pair_ws);
+        cuestAOBasisDestroy(cuest_basis);
+        for (auto& s : shells) cuestAOShellDestroy(s);
+        free_workspace(basis_ws);
+
+        timer_off("Grad: S (cuEST)");
+        timer_off("Grad: V T Perturb (cuEST)");
+    } else
+#endif
+    {
+        // => V T Perturbation Gradients (CPU) <= //
+        timer_on("Grad: V T Perturb");
+        gradients_["Core"] = mints->core_hamiltonian_grad(Dt);
+        timer_off("Grad: V T Perturb");
+
+        // => Overlap Gradient (CPU) <= //
+        timer_on("Grad: S");
+        gradients_["Overlap"] = mints->overlap_grad(W);
+        gradients_["Overlap"]->scale(-1.0);
+        timer_off("Grad: S");
+    }
 
     // If an external field exists, add it to the one-electron Hamiltonian
     if (external_pot_) {
@@ -194,32 +392,6 @@ SharedMatrix SCFDeriv::compute_gradient()
         gradients_["External Potential"] = external_pot_->computePotentialGradients(basisset_, Dt);
         timer_off("Grad: External");
     }  // end external
-
-    // => Overlap Gradient <= //
-    timer_on("Grad: S");
-    {
-        // Energy weighted density matrix
-        SharedMatrix W(Da->clone());
-        W->set_name("W");
-
-        // Alpha
-        auto tmp = Ca_occ->clone();
-        for (size_t i = 0; i < nalpha; i++){
-            tmp->scale_column(0, i, eps_a_occ->get(i));
-        }
-        W->gemm(false, true, 1.0, tmp, Ca_occ, 0.0);
-
-        // Beta
-        tmp->copy(Cb_occ);
-        for (size_t i = 0; i < nbeta; i++){
-            tmp->scale_column(0, i, eps_b_occ->get(i));
-        }
-        W->gemm(false, true, 1.0, tmp, Cb_occ, 1.0);
-
-        gradients_["Overlap"] = mints->overlap_grad(W);
-        gradients_["Overlap"]->scale(-1.0);
-    }
-    timer_off("Grad: S");
 
     // => Two-Electron Gradient <= //
     timer_on("Grad: JK");

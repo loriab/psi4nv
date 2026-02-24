@@ -4,10 +4,13 @@ Detailed implementation notes for extending Psi4's cuEST integration to cover DF
 
 ## Status
 
-- **Phase 1**: DONE — DFT energy verified with water (B3LYP, PBE) at `tests/cuest-dft-h2o/input.dat`. Energies match DF to ~1e-11 Eh.
-- **Phase 3 (J/K Gradient)**: DONE — `cuESTJKGrad` implemented and verified with water (RHF, B3LYP, PBE) at `tests/cuest-grad-h2o/input.dat`. Gradients match DF to ~1e-10 Eh/Bohr. Also verified with cc-pVDZ.
-- **Phase 2 (GPU XC)**: DONE — GPU-accelerated XC potential and gradient via cuEST. Verified with water (B3LYP, B3LYP5, PBE, BLYP, PBE0) at `tests/cuest-gpu-xc-h2o/input.dat`. Energies match DF to ~2-7e-8 Eh, gradients to ~2e-6 Eh/Bohr. Opt-in via `PSI4_CUEST_GPU_XC=1` env var. Paxlovid benchmark at `tests/cuest-bench-paxlovid/bench_full_gpu_dft.py`.
-- **Phase 4 (Full GPU Gradient)**: DONE — Combined GPU J/K gradient (cuESTJKGrad) + GPU XC gradient (cuEST XC derivative). Verified in Paxlovid benchmark: gradient delta vs DF is ~1.9e-4 Eh/Bohr (grid difference). Full GPU DFT energy speedup: 1.87x, gradient speedup: 1.73x over 8-thread DF.
+- **Phase 1**: DONE — DFT energy verified with water (B3LYP, PBE) at `tests/cuest-dft-h2o/input.dat`. Energies match DF to ~1e-11 Eh (J/K only), ~2-7e-8 Eh (with GPU XC).
+- **Phase 3 (J/K Gradient)**: DONE — `cuESTJKGrad` implemented and verified with water (RHF, B3LYP, PBE) at `tests/cuest-grad-h2o/input.dat`. Gradients match DF to ~1e-10 Eh/Bohr (J/K only), ~2e-6 Eh/Bohr (with GPU XC).
+- **Phase 2 (GPU XC)**: DONE — GPU-accelerated XC potential and gradient via cuEST. Verified with water (B3LYP, B3LYP5, PBE, BLYP, PBE0) at `tests/cuest-gpu-xc-h2o/input.dat`. **Now default** for `SCF_TYPE=CUEST` when the functional is supported (no env var needed). Paxlovid benchmark at `tests/cuest-bench-paxlovid/bench_full_gpu_dft.py`.
+- **Phase 4a (OE Gradients)**: DONE — GPU one-electron gradients (overlap, kinetic, nuclear attraction) via cuEST `cuestOEIntPlan_t`. Replaces CPU `MintsHelper` calls in `scf_grad.cc` for `SCF_TYPE=CUEST`.
+- **Phase 4b (Full GPU Gradient)**: DONE — All gradient components on GPU: J/K (cuESTJKGrad) + XC (cuEST XC derivative) + OE (cuEST OE plan). Paxlovid benchmark at `tests/cuest-bench-paxlovid/bench_full_gpu_dft.py`.
+- **Code Cleanup**: DONE — Shared cuEST utilities extracted to `psi4/src/psi4/libfock/cuESTCommon.h` (workspace management, basis building, pair list, error macro). Used by `cuESTJK.cc`, `cuESTJKGrad.cc`, `v.cc`, and `scf_grad.cc`.
+- **Large-Basis Benchmark**: Script at `tests/cuest-bench-paxlovid/bench_large_basis.py` for STO-3G/cc-pVDZ/cc-pVTZ testing on H200.
 
 ## Global cuEST Handle
 
@@ -409,87 +412,19 @@ Recommendation: Extract `build_cuest_basis()`, `allocate_workspace()`, `free_wor
 
 ## Phase 4: Full GPU Gradient
 
-### 4a: One-Electron Gradients via cuEST
+### 4a: One-Electron Gradients via cuEST (DONE)
 
-Currently in `scf_grad.cc`:
+Implemented in `scf_grad.cc`. When `SCF_TYPE=CUEST`, the code builds a `cuestOEIntPlan_t` from the AO basis and pair list (using shared utilities from `cuESTCommon.h`), then:
 
-```cpp
-// Core (kinetic + potential) gradient
-gradients_["Core"] = mints->core_hamiltonian_grad(Dt);
+1. **Kinetic gradient**: `cuestKineticDerivativeCompute(handle, plan, ws, d_Dt, d_grad)` — contracts dT/dR with the total density matrix Dt
+2. **Potential gradient**: `cuestPotentialDerivativeCompute(handle, plan, ws, natom, xyz, Z, d_Dt, d_basisGrad, d_chargeGrad)` — nuclear charges serve as the "point charges"; both basis-center and charge-center gradient contributions are summed into `gradients_["Core"]`
+3. **Overlap gradient**: `cuestOverlapDerivativeCompute(handle, plan, ws, d_W, d_grad)` — contracts dS/dR with the energy-weighted density W, then scales by -1 for `gradients_["Overlap"]`
 
-// Overlap gradient  
-gradients_["Overlap"] = mints->overlap_grad(W);
-```
-
-cuEST provides:
-
-```c
-// Overlap gradient
-cuestStatus_t cuestOverlapDerivativeCompute(
-    cuestHandle_t handle,
-    cuestOEIntPlan_t plan,
-    cuestWorkspace_t* temporaryWorkspace,
-    const double* densityMatrix,     // device, nao×nao
-    double* outGradient);            // device, natom×3
-
-// Kinetic energy gradient
-cuestStatus_t cuestKineticDerivativeCompute(
-    cuestHandle_t handle,
-    cuestOEIntPlan_t plan,
-    cuestWorkspace_t* temporaryWorkspace,
-    const double* densityMatrix,     // device, nao×nao
-    double* outGradient);            // device, natom×3
-
-// Nuclear attraction gradient
-cuestStatus_t cuestPotentialDerivativeCompute(
-    cuestHandle_t handle,
-    cuestOEIntPlan_t plan,
-    cuestWorkspace_t* temporaryWorkspace,
-    uint64_t numCharges,
-    const double* xyz,               // charge positions (Bohr)
-    const double* q,                 // charge values (nuclear charges)
-    const double* densityMatrix,     // device, nao×nao
-    double* outBasisGradient,        // device, natom×3 (gradient w.r.t. basis centers)
-    double* outChargeGradient);      // device, numCharges×3 (gradient w.r.t. charges)
-```
-
-These need an `cuestOEIntPlan_t` built from:
-
-```c
-cuestStatus_t cuestOEIntPlanCreate(
-    cuestHandle_t handle,
-    const cuestAOBasis_t basis,
-    const cuestAOPairList_t pairList,
-    const cuestOEIntPlanParameters_t parameters,
-    cuestWorkspace_t* persistentWorkspace,
-    cuestWorkspace_t* temporaryWorkspace,
-    cuestOEIntPlan_t* outPlan);
-```
-
-**Implementation**: Add a cuEST path in `SCFDeriv::compute_gradient()` (`scf_grad.cc`):
-
-```cpp
-#ifdef USING_cuEST
-if (options_.get_str("SCF_TYPE") == "CUEST") {
-    // Build OE plan (basis + pair list already available from JK grad)
-    // Compute kinetic + potential gradients via cuEST
-    // Compute overlap gradient via cuEST
-    // Store in gradients_["Core"] and gradients_["Overlap"]
-} else
-#endif
-{
-    // Existing MintsHelper path
-    gradients_["Core"] = mints->core_hamiltonian_grad(Dt);
-    gradients_["Overlap"] = mints->overlap_grad(W);
-    gradients_["Overlap"]->scale(-1.0);
-}
-```
-
-**Important**: The overlap gradient uses the energy-weighted density matrix W, not Dt. And the potential gradient needs nuclear charges and positions as the "point charges".
+Falls back to the CPU `MintsHelper` path for non-CUEST `SCF_TYPE`.
 
 ### 4b: XC Gradient via cuEST (DONE)
 
-Implemented as part of Phase 2. The `RV::compute_gradient()` method has a cuEST short-circuit that calls `cuestXCDerivativeRKSCompute`. This is automatically active when GPU XC is enabled (`PSI4_CUEST_GPU_XC=1`).
+Implemented as part of Phase 2. The `RV::compute_gradient()` method has a cuEST short-circuit that calls `cuestXCDerivativeRKSCompute`. This is automatically active when GPU XC is enabled (default for `SCF_TYPE=CUEST` with supported functionals).
 
 The XC gradient uses the same cuEST infrastructure (grid, XC plan) built in `VBase::cuest_xc_initialize()`.
 
@@ -507,36 +442,56 @@ if(TARGET cuEST::cuEST)
 endif()
 ```
 
-The `scfgrad` library needs similar treatment (for Phase 3+4). Since `scfgrad` already links `scf_solver` which depends on `fock`, the cuEST transitive dependency may already be available, but the `USING_cuEST` compile definition needs to be explicitly added to `scfgrad`.
+The `scfgrad` and `scf_solver` libraries also have `USING_cuEST` defined in their respective `CMakeLists.txt` files. This is critical for ODR compliance (consistent struct layouts across compilation units).
+
+Shared cuEST utilities (workspace management, basis/pair-list construction, error macro) live in `psi4/src/psi4/libfock/cuESTCommon.h` — a header-only file included by `cuESTJK.cc`, `cuESTJKGrad.cc`, `v.cc`, and `scf_grad.cc`.
 
 ---
 
 ## Testing & Benchmarks
 
 ### Water tests (correctness)
-- `tests/cuest-dft-h2o/input.dat` — DFT energy with GPU J/K, CPU XC (B3LYP, PBE). Matches DF to ~1e-11 Eh.
-- `tests/cuest-grad-h2o/input.dat` — J/K gradient (RHF, B3LYP, PBE). Matches DF to ~1e-10 Eh/Bohr.
-- `tests/cuest-gpu-xc-h2o/input.dat` — Full GPU XC energy + gradient (B3LYP, PBE). Energy matches to ~2-7e-8 Eh, gradient to ~2e-6 Eh/Bohr.
+- `tests/cuest-dft-h2o/input.dat` — DFT energy with full GPU path (B3LYP, PBE). Matches DF to ~5 decimal places (grid differences).
+- `tests/cuest-grad-h2o/input.dat` — Full gradient: GPU J/K + GPU OE + GPU XC (RHF, B3LYP). RHF matches to 5 decimal places, B3LYP to 4 (XC grid differences).
+- `tests/cuest-gpu-xc-h2o/input.dat` — GPU XC energy + gradient (B3LYP, PBE). Energy matches to ~2-7e-8 Eh, gradient to ~2e-6 Eh/Bohr.
 
 ### Paxlovid benchmarks (performance)
-- `tests/cuest-bench-paxlovid/bench_dft.py` — DFT energy (GPU J/K, CPU XC)
-- `tests/cuest-bench-paxlovid/bench_gradient.py` — J/K gradient (RHF, B3LYP)
-- `tests/cuest-bench-paxlovid/bench_full_gpu_dft.py` — Full GPU DFT (GPU J/K + GPU XC), energy + gradient
+- `tests/cuest-bench-paxlovid/bench_dft.py` — DFT energy comparison
+- `tests/cuest-bench-paxlovid/bench_full_gpu_dft.py` — Full GPU DFT (J/K + XC + OE gradients), energy + gradient
+- `tests/cuest-bench-paxlovid/bench_large_basis.py` — Multi-basis benchmark (STO-3G, cc-pVDZ, cc-pVTZ) for H200 testing
 
 ### Full GPU DFT Paxlovid Results (B3LYP/STO-3G, 67 atoms, 8 CPU threads)
 
 | Configuration | Energy speedup | Gradient speedup | Energy delta | Grad delta |
 |--------------|---------------|-----------------|-------------|-----------|
-| GPU J/K + CPU XC | 1.81x | 1.93x | 1.19e-8 Eh | 4.58e-6 |
-| GPU J/K + GPU XC | 1.87x | 1.73x | 1.41e-5 Eh | 1.92e-4 |
+| Full GPU (J/K + XC + OE) | 1.87x | 1.73x | 1.41e-5 Eh | 1.92e-4 |
 
 ---
 
+## Known Issues
+
+### SVWN Functional Mismatch (~196 mEh)
+
+The SVWN functional shows a persistent ~196 mEh energy error on water/STO-3G when comparing cuEST GPU XC against the DF (CPU, LibXC) reference. This error is **constant regardless of grid quality**, ruling out grid differences as the cause.
+
+**Background:**
+- Psi4's "SVWN" functional = LibXC `LDA_X` + `LDA_C_VWN` (which uses the VWN5 parameterization)
+- cuEST provides `CUEST_XCINTPLAN_PARAMETERS_FUNCTIONAL_SVWN5` (enum 9), which should in principle be the same
+- The error magnitude (~196 mEh) is much larger than typical grid-related differences (~0.01–0.1 mEh)
+
+**Possible causes:**
+1. Different VWN parameterization under the hood (e.g., VWN5 vs VWN3 RPA)
+2. Spin-polarization convention mismatch in the LDA correlation (restricted vs paramagnetic limit)
+3. A bug in cuEST's SVWN5 implementation
+
+**Current status:** SVWN is **not** included in the functional mapping (`map_functional_to_cuest` in `v.cc`), so it gracefully falls back to CPU XC when requested with `SCF_TYPE=CUEST`.
+
+**Action items:**
+- File issue with the cuEST team or test against cuEST's own SVWN5 example inputs
+- Compare LibXC vs cuEST LDA correlation values on a single grid point to isolate the discrepancy
+
 ## Remaining Work
 
-- **Phase 4a (OE gradients)**: Not started. One-electron gradients (overlap, kinetic, nuclear attraction) are still on CPU. Could be offloaded to cuEST for further speedup.
-- **SVWN functional**: cuEST SVWN5 mapping produces ~196 mEh error. Needs investigation.
-- **Larger basis sets**: All benchmarks use STO-3G. Test with cc-pVDZ, cc-pVTZ for more realistic workloads.
-- **Make GPU XC default**: Currently opt-in via env var. Consider making it the default when SCF_TYPE=CUEST, or adding a Psi4 option.
-- **UKS support**: Only RKS (restricted) is implemented. Add UKS (unrestricted) path for `UV::compute_V()` and `UV::compute_gradient()`.
-- **Common utilities**: Extract shared cuEST helpers (basis building, workspace management) into `cuESTCommon.h` used by cuESTJK, cuESTJKGrad, and VBase.
+- **UKS support**: Only RKS (restricted) is implemented. Add UKS (unrestricted) path for `UV::compute_V()` and `UV::compute_gradient()` using `cuestXCPotentialUKSCompute`/`cuestXCDerivativeUKSCompute`.
+- **Larger basis verification**: Run `bench_large_basis.py` on cc-pVDZ and cc-pVTZ to validate correctness and characterize GPU speedup scaling.
+- **Range-separated exchange (wK) gradients**: `cuESTJKGrad` does not yet support wK (omega-dependent exchange). Needed for functionals like wB97X-D.

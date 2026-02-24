@@ -91,18 +91,11 @@ extern bool brianBuildingNLCGrid;
 #endif
 
 #ifdef USING_cuEST
-#include <cuest.h>
-#include <cuda_runtime.h>
+#include "cuESTCommon.h"
 
-extern cuestHandle_t cuest_handle;
-
-static void check_cuest_xc(cuestStatus_t status, const char* func) {
-    if (status != CUEST_STATUS_SUCCESS) {
-        std::ostringstream msg;
-        msg << "cuEST XC error in " << func << " (status code " << static_cast<int>(status) << ")";
-        throw psi::PsiException(msg.str(), __FILE__, __LINE__);
-    }
-}
+using psi::cuest_common::alloc_workspace;
+using psi::cuest_common::free_workspace;
+using psi::cuest_common::build_cuest_basis;
 
 static cuestWorkspace_t to_cuest_ws(psi::VBase::CuESTWorkspace& w) {
     cuestWorkspace_t ws;
@@ -119,7 +112,6 @@ static void from_cuest_ws(const cuestWorkspace_t& ws, psi::VBase::CuESTWorkspace
     w.deviceBuffer = ws.deviceBuffer;
     w.deviceBufferSizeInBytes = ws.deviceBufferSizeInBytes;
 }
-#define CHECK_CUEST_XC(call) check_cuest_xc((call), #call)
 
 static double ahlrichs_radius(int Z) {
     static const double radii[] = {
@@ -169,81 +161,6 @@ static int map_functional_to_cuest(const std::string& name) {
     return -1;
 }
 
-static void alloc_ws(cuestWorkspaceDescriptor_t& desc, cuestWorkspace_t& ws) {
-    ws = {};
-    if (desc.hostBufferSizeInBytes > 0) {
-        ws.hostBuffer = reinterpret_cast<uintptr_t>(malloc(desc.hostBufferSizeInBytes));
-        ws.hostBufferSizeInBytes = desc.hostBufferSizeInBytes;
-    }
-    if (desc.deviceBufferSizeInBytes > 0) {
-        void* dev_ptr = nullptr;
-        cudaMalloc(&dev_ptr, desc.deviceBufferSizeInBytes);
-        ws.deviceBuffer = reinterpret_cast<uintptr_t>(dev_ptr);
-        ws.deviceBufferSizeInBytes = desc.deviceBufferSizeInBytes;
-    }
-}
-
-static void free_ws(cuestWorkspace_t& ws) {
-    if (ws.hostBuffer) {
-        free(reinterpret_cast<void*>(ws.hostBuffer));
-        ws.hostBuffer = 0;
-        ws.hostBufferSizeInBytes = 0;
-    }
-    if (ws.deviceBuffer) {
-        cudaFree(reinterpret_cast<void*>(ws.deviceBuffer));
-        ws.deviceBuffer = 0;
-        ws.deviceBufferSizeInBytes = 0;
-    }
-}
-
-static cuestAOBasis_t build_cuest_basis_for_xc(std::shared_ptr<psi::BasisSet> basis,
-                                                std::vector<cuestAOShell_t>& shells_out,
-                                                cuestWorkspace_t& persistent_ws) {
-    auto mol = basis->molecule();
-    int natom = mol->natom();
-
-    cuestAOShellParameters_t shell_params;
-    CHECK_CUEST_XC(cuestParametersCreate(CUEST_AOSHELL_PARAMETERS, reinterpret_cast<void**>(&shell_params)));
-
-    shells_out.clear();
-    std::vector<uint64_t> shells_per_atom(natom);
-
-    for (int A = 0; A < natom; A++) {
-        int nshell_on_atom = basis->nshell_on_center(A);
-        shells_per_atom[A] = static_cast<uint64_t>(nshell_on_atom);
-        for (int Q = 0; Q < nshell_on_atom; Q++) {
-            int shell_idx = basis->shell_on_center(A, Q);
-            const auto& shell = basis->shell(shell_idx);
-            cuestAOShell_t cuest_shell;
-            CHECK_CUEST_XC(cuestAOShellCreate(
-                cuest_handle, shell.is_pure() ? 1 : 0,
-                static_cast<uint64_t>(shell.am()),
-                static_cast<uint64_t>(shell.nprimitive()),
-                shell.exps(), shell.coefs(), shell_params, &cuest_shell));
-            shells_out.push_back(cuest_shell);
-        }
-    }
-    cuestParametersDestroy(CUEST_AOSHELL_PARAMETERS, shell_params);
-
-    cuestAOBasisParameters_t basis_params;
-    CHECK_CUEST_XC(cuestParametersCreate(CUEST_AOBASIS_PARAMETERS, reinterpret_cast<void**>(&basis_params)));
-
-    cuestWorkspaceDescriptor_t p_desc = {}, t_desc = {};
-    CHECK_CUEST_XC(cuestAOBasisCreateWorkspaceQuery(cuest_handle, static_cast<uint64_t>(natom),
-        shells_per_atom.data(), shells_out.data(), basis_params, &p_desc, &t_desc, nullptr));
-
-    alloc_ws(p_desc, persistent_ws);
-    cuestWorkspace_t tmp = {};
-    alloc_ws(t_desc, tmp);
-
-    cuestAOBasis_t cuest_basis;
-    CHECK_CUEST_XC(cuestAOBasisCreate(cuest_handle, static_cast<uint64_t>(natom),
-        shells_per_atom.data(), shells_out.data(), basis_params, &persistent_ws, &tmp, &cuest_basis));
-
-    free_ws(tmp);
-    cuestParametersDestroy(CUEST_AOBASIS_PARAMETERS, basis_params);
-    return cuest_basis;
-}
 #endif // USING_cuEST
 
 namespace psi {
@@ -842,12 +759,6 @@ void VBase::cuest_xc_initialize() {
     if (options_.get_str("SCF_TYPE") != "CUEST") return;
     if (!functional_->needs_xc()) return;
 
-    const char* env = std::getenv("PSI4_CUEST_GPU_XC");
-    if (!env || (std::string(env) != "1" && std::string(env) != "TRUE")) {
-        outfile->Printf("  cuEST XC: GPU XC disabled (set PSI4_CUEST_GPU_XC=1 to enable).\n");
-        return;
-    }
-
     int cuest_func = map_functional_to_cuest(functional_->name());
     if (cuest_func < 0) {
         outfile->Printf("  cuEST XC: functional \"%s\" not supported, falling back to CPU.\n", functional_->name().c_str());
@@ -863,7 +774,7 @@ void VBase::cuest_xc_initialize() {
     {
         std::vector<cuestAOShell_t> shells;
         cuestWorkspace_t ws = {};
-        cuestAOBasis_t basis = build_cuest_basis_for_xc(primary_, shells, ws);
+        cuestAOBasis_t basis = build_cuest_basis(primary_, shells, ws);
         cuest_xc_basis_ = basis;
         cuest_xc_shells_.assign(shells.begin(), shells.end());
         from_cuest_ws(ws, cuest_xc_basis_ws_);
@@ -871,7 +782,7 @@ void VBase::cuest_xc_initialize() {
 
     // Build atom grids (Ahlrichs radial + Lebedev angular)
     cuestAtomGridParameters_t ag_params;
-    CHECK_CUEST_XC(cuestParametersCreate(CUEST_ATOMGRID_PARAMETERS, reinterpret_cast<void**>(&ag_params)));
+    CHECK_CUEST(cuestParametersCreate(CUEST_ATOMGRID_PARAMETERS, reinterpret_cast<void**>(&ag_params)));
 
     std::vector<uint64_t> angular_per_radial(nrad, static_cast<uint64_t>(nang));
 
@@ -884,7 +795,7 @@ void VBase::cuest_xc_initialize() {
         build_ahlrichs_quadrature(nrad, R, radial_nodes, radial_weights);
 
         cuestAtomGrid_t ag;
-        CHECK_CUEST_XC(cuestAtomGridCreate(
+        CHECK_CUEST(cuestAtomGridCreate(
             cuest_handle, static_cast<uint64_t>(nrad),
             radial_nodes.data(), radial_weights.data(),
             angular_per_radial.data(), ag_params, &ag));
@@ -901,61 +812,61 @@ void VBase::cuest_xc_initialize() {
     }
 
     cuestMolecularGridParameters_t mg_params;
-    CHECK_CUEST_XC(cuestParametersCreate(CUEST_MOLECULARGRID_PARAMETERS, reinterpret_cast<void**>(&mg_params)));
+    CHECK_CUEST(cuestParametersCreate(CUEST_MOLECULARGRID_PARAMETERS, reinterpret_cast<void**>(&mg_params)));
 
     std::vector<cuestAtomGrid_t> atom_grids(natom);
     for (int i = 0; i < natom; i++) atom_grids[i] = static_cast<cuestAtomGrid_t>(cuest_xc_atom_grids_[i]);
 
     cuestWorkspaceDescriptor_t grid_p_desc = {}, grid_t_desc = {};
-    CHECK_CUEST_XC(cuestMolecularGridCreateWorkspaceQuery(
+    CHECK_CUEST(cuestMolecularGridCreateWorkspaceQuery(
         cuest_handle, static_cast<uint64_t>(natom), atom_grids.data(),
         xyz.data(), mg_params, &grid_p_desc, &grid_t_desc, nullptr));
 
     cuestWorkspace_t grid_pws = {};
-    alloc_ws(grid_p_desc, grid_pws);
+    alloc_workspace(grid_p_desc, grid_pws);
     from_cuest_ws(grid_pws, cuest_xc_grid_ws_);
     cuestWorkspace_t grid_tmp = {};
-    alloc_ws(grid_t_desc, grid_tmp);
+    alloc_workspace(grid_t_desc, grid_tmp);
 
     cuestMolecularGrid_t mol_grid;
-    CHECK_CUEST_XC(cuestMolecularGridCreate(
+    CHECK_CUEST(cuestMolecularGridCreate(
         cuest_handle, static_cast<uint64_t>(natom), atom_grids.data(),
         xyz.data(), mg_params, &grid_pws, &grid_tmp, &mol_grid));
     cuest_xc_mol_grid_ = mol_grid;
 
-    free_ws(grid_tmp);
+    free_workspace(grid_tmp);
     cuestParametersDestroy(CUEST_MOLECULARGRID_PARAMETERS, mg_params);
 
     // Build XC integral plan
     cuestXCIntPlanParameters_t xc_params;
-    CHECK_CUEST_XC(cuestParametersCreate(CUEST_XCINTPLAN_PARAMETERS, reinterpret_cast<void**>(&xc_params)));
+    CHECK_CUEST(cuestParametersCreate(CUEST_XCINTPLAN_PARAMETERS, reinterpret_cast<void**>(&xc_params)));
 
     int32_t deriv_level = 1;
-    CHECK_CUEST_XC(cuestParametersConfigure(CUEST_XCINTPLAN_PARAMETERS, xc_params,
+    CHECK_CUEST(cuestParametersConfigure(CUEST_XCINTPLAN_PARAMETERS, xc_params,
         CUEST_XCINTPLAN_PARAMETERS_DERIVATIVE_LEVEL, &deriv_level, sizeof(int32_t)));
 
     auto func_enum = static_cast<cuestXCIntPlanParametersFunctional_t>(cuest_func);
 
     cuestWorkspaceDescriptor_t xc_p_desc = {}, xc_t_desc = {};
-    CHECK_CUEST_XC(cuestXCIntPlanCreateWorkspaceQuery(
+    CHECK_CUEST(cuestXCIntPlanCreateWorkspaceQuery(
         cuest_handle, static_cast<cuestAOBasis_t>(cuest_xc_basis_),
         static_cast<cuestMolecularGrid_t>(cuest_xc_mol_grid_), func_enum,
         xc_params, &xc_p_desc, &xc_t_desc, nullptr));
 
     cuestWorkspace_t xc_pws = {};
-    alloc_ws(xc_p_desc, xc_pws);
+    alloc_workspace(xc_p_desc, xc_pws);
     from_cuest_ws(xc_pws, cuest_xc_plan_ws_);
     cuestWorkspace_t xc_tmp = {};
-    alloc_ws(xc_t_desc, xc_tmp);
+    alloc_workspace(xc_t_desc, xc_tmp);
 
     cuestXCIntPlan_t xc_plan;
-    CHECK_CUEST_XC(cuestXCIntPlanCreate(
+    CHECK_CUEST(cuestXCIntPlanCreate(
         cuest_handle, static_cast<cuestAOBasis_t>(cuest_xc_basis_),
         static_cast<cuestMolecularGrid_t>(cuest_xc_mol_grid_), func_enum,
         xc_params, &xc_pws, &xc_tmp, &xc_plan));
     cuest_xc_plan_ = xc_plan;
 
-    free_ws(xc_tmp);
+    free_workspace(xc_tmp);
     cuestParametersDestroy(CUEST_XCINTPLAN_PARAMETERS, xc_params);
 
     cuest_xc_enabled_ = true;
@@ -984,15 +895,15 @@ void VBase::cuest_xc_cleanup() {
     cuestWorkspace_t ws;
 
     ws = to_cuest_ws(cuest_xc_plan_ws_);
-    free_ws(ws);
+    free_workspace(ws);
     cuest_xc_plan_ws_ = {};
 
     ws = to_cuest_ws(cuest_xc_grid_ws_);
-    free_ws(ws);
+    free_workspace(ws);
     cuest_xc_grid_ws_ = {};
 
     ws = to_cuest_ws(cuest_xc_basis_ws_);
-    free_ws(ws);
+    free_workspace(ws);
     cuest_xc_basis_ws_ = {};
 
     cuest_xc_enabled_ = false;
@@ -1623,15 +1534,15 @@ void RV::compute_V(std::vector<SharedMatrix> ret) {
         auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
 
         cuestWorkspaceDescriptor_t temp_desc = {};
-        CHECK_CUEST_XC(cuestXCPotentialRKSComputeWorkspaceQuery(
+        CHECK_CUEST(cuestXCPotentialRKSComputeWorkspaceQuery(
             cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
             static_cast<uint64_t>(nocc), nullptr, nullptr, nullptr));
 
         cuestWorkspace_t temp_ws = {};
-        alloc_ws(temp_desc, temp_ws);
+        alloc_workspace(temp_desc, temp_ws);
 
         double xc_energy = 0.0;
-        CHECK_CUEST_XC(cuestXCPotentialRKSCompute(
+        CHECK_CUEST(cuestXCPotentialRKSCompute(
             cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
             static_cast<uint64_t>(nocc), d_C, &xc_energy, d_Vxc));
         cudaDeviceSynchronize();
@@ -1639,7 +1550,7 @@ void RV::compute_V(std::vector<SharedMatrix> ret) {
         // Download Vxc matrix
         cudaMemcpy(ret[0]->get_pointer(), d_Vxc, nbf2_bytes, cudaMemcpyDeviceToHost);
 
-        free_ws(temp_ws);
+        free_workspace(temp_ws);
         cudaFree(d_Vxc);
         cudaFree(d_C);
 
@@ -2388,15 +2299,15 @@ SharedMatrix RV::compute_gradient() {
         auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
 
         cuestWorkspaceDescriptor_t temp_desc = {};
-        CHECK_CUEST_XC(cuestXCDerivativeRKSComputeWorkspaceQuery(
+        CHECK_CUEST(cuestXCDerivativeRKSComputeWorkspaceQuery(
             cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
             static_cast<uint64_t>(nocc), nullptr, nullptr));
 
         cuestWorkspace_t temp_ws = {};
-        alloc_ws(temp_desc, temp_ws);
+        alloc_workspace(temp_desc, temp_ws);
 
         cudaMemset(d_grad, 0, grad_bytes);
-        CHECK_CUEST_XC(cuestXCDerivativeRKSCompute(
+        CHECK_CUEST(cuestXCDerivativeRKSCompute(
             cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
             static_cast<uint64_t>(nocc), d_C, d_grad));
         cudaDeviceSynchronize();
@@ -2412,7 +2323,7 @@ SharedMatrix RV::compute_gradient() {
             Gp[A][2] = grad_host[3 * A + 2];
         }
 
-        free_ws(temp_ws);
+        free_workspace(temp_ws);
         cudaFree(d_grad);
         cudaFree(d_C);
 

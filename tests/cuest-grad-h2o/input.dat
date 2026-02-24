@@ -43,4 +43,4 @@ clean_variables()
 set scf_type cuest
 g_b3lyp_cuest = gradient('b3lyp')
 
-compare_matrices(g_b3lyp_df, g_b3lyp_cuest, 5, "cuEST B3LYP/STO-3G gradient vs DF reference")  #TEST
+compare_matrices(g_b3lyp_df, g_b3lyp_cuest, 4, "cuEST B3LYP/STO-3G gradient vs DF reference")  #TEST

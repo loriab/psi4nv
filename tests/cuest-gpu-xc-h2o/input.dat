@@ -1,9 +1,7 @@
 #! Water DFT with full GPU XC via cuEST.
 #! Tests GPU-accelerated XC potential and gradient against DF reference.
 #! B3LYP and PBE functionals verified for energy and gradient.
-
-import os
-os.environ['PSI4_CUEST_GPU_XC'] = '1'
+#! GPU XC is now default for SCF_TYPE=CUEST when the functional is supported.
 
 molecule water {
     symmetry c1
