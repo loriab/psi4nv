@@ -44,6 +44,13 @@ if(TARGET BrianQC::static_wrapper)
     )
 endif()
 
+if(TARGET cuEST::cuEST)
+  target_compile_definitions(scf_solver
+    PUBLIC
+      USING_cuEST
+    )
+endif()
+
 if(TARGET OpenOrbitalOptimizer::OpenOrbitalOptimizer)
   target_compile_definitions(scf_solver
     PUBLIC

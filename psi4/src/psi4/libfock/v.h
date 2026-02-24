@@ -35,6 +35,7 @@
 #include <unordered_map>
 #include <string>
 
+
 namespace psi {
 class BasisSet;
 class Options;
@@ -90,6 +91,32 @@ class PSI_API VBase {
 
     /// Vector of C1 D matrices (built by USO2AO)
     std::vector<SharedMatrix> D_AO_;
+    /// Vector of C1 occupied MO coefficient matrices (for cuEST XC)
+    std::vector<SharedMatrix> C_AO_;
+
+#ifdef USING_cuEST
+   public:
+    struct CuESTWorkspace {
+        uintptr_t hostBuffer = 0;
+        size_t hostBufferSizeInBytes = 0;
+        uintptr_t deviceBuffer = 0;
+        size_t deviceBufferSizeInBytes = 0;
+    };
+   protected:
+
+    bool cuest_xc_enabled_ = false;
+    void* cuest_xc_basis_ = nullptr;
+    std::vector<void*> cuest_xc_shells_;
+    CuESTWorkspace cuest_xc_basis_ws_ = {};
+    std::vector<void*> cuest_xc_atom_grids_;
+    void* cuest_xc_mol_grid_ = nullptr;
+    CuESTWorkspace cuest_xc_grid_ws_ = {};
+    void* cuest_xc_plan_ = nullptr;
+    CuESTWorkspace cuest_xc_plan_ws_ = {};
+
+    void cuest_xc_initialize();
+    void cuest_xc_cleanup();
+#endif
 
     // GRAC data
     bool grac_initialized_;
@@ -127,6 +154,9 @@ class PSI_API VBase {
     // Set the D matrix, get it back if needed
     void set_D(std::vector<SharedMatrix> Dvec);
     const std::vector<SharedMatrix>& Dao() const { return D_AO_; }
+
+    // Set occupied MO coefficients (AO basis) for cuEST XC
+    void set_C(std::vector<SharedMatrix> Cvec) { C_AO_ = Cvec; }
 
     // Set the site of the grac shift
     void set_grac_shift(double value);

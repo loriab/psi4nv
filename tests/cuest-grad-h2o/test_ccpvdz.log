@@ -1,0 +1,36 @@
+2026-02-23:22:07:03,466 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'REFERENCE': 'RHF', 'SCF_TYPE': 'DF', 'function_kwargs': {}}
+2026-02-23:22:07:03,468 INFO     [psi4.driver.driver:642] Compute gradient(): method=scf, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:03,743 INFO     [psi4.driver.driver:645] Return gradient(): -76.02675116349118
+2026-02-23:22:07:03,743 INFO     [psi4.driver.driver:646] [[ 0.         -0.          0.0151169 ]
+ [-0.01037577  0.         -0.00755845]
+ [ 0.01037577 -0.         -0.00755845]]
+2026-02-23:22:07:03,755 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'CUEST', 'function_kwargs': {}}
+2026-02-23:22:07:03,756 INFO     [psi4.driver.driver:642] Compute gradient(): method=scf, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:04,20 INFO     [psi4.driver.driver:645] Return gradient(): -76.02675116349369
+2026-02-23:22:07:04,20 INFO     [psi4.driver.driver:646] [[ 0.          0.          0.0151169 ]
+ [-0.01037577 -0.         -0.00755845]
+ [ 0.01037577 -0.         -0.00755845]]
+2026-02-23:22:07:04,32 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'DF', 'function_kwargs': {}}
+2026-02-23:22:07:04,33 INFO     [psi4.driver.driver:642] Compute gradient(): method=b3lyp, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:04,658 INFO     [psi4.driver.driver:645] Return gradient(): -76.42039041917262
+2026-02-23:22:07:04,658 INFO     [psi4.driver.driver:646] [[ 0.          0.         -0.0153143 ]
+ [ 0.00668157 -0.          0.0076604 ]
+ [-0.00668157 -0.          0.0076604 ]]
+2026-02-23:22:07:04,670 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'CUEST', 'function_kwargs': {}}
+2026-02-23:22:07:04,671 INFO     [psi4.driver.driver:642] Compute gradient(): method=b3lyp, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:05,354 INFO     [psi4.driver.driver:645] Return gradient(): -76.42039041917232
+2026-02-23:22:07:05,354 INFO     [psi4.driver.driver:646] [[-0.          0.         -0.0153143 ]
+ [ 0.00668157  0.          0.0076604 ]
+ [-0.00668157 -0.          0.0076604 ]]
+2026-02-23:22:07:05,366 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'DF', 'function_kwargs': {}}
+2026-02-23:22:07:05,367 INFO     [psi4.driver.driver:642] Compute gradient(): method=pbe, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:05,924 INFO     [psi4.driver.driver:645] Return gradient(): -76.33347559150108
+2026-02-23:22:07:05,924 INFO     [psi4.driver.driver:646] [[-0.         -0.         -0.02571707]
+ [ 0.01177238  0.          0.01286188]
+ [-0.01177238 -0.          0.01286188]]
+2026-02-23:22:07:05,936 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'CUEST', 'function_kwargs': {}}
+2026-02-23:22:07:05,937 INFO     [psi4.driver.driver:642] Compute gradient(): method=pbe, basis=cc-pvdz, molecule=water, nre=9.189522606887968
+2026-02-23:22:07:06,558 INFO     [psi4.driver.driver:645] Return gradient(): -76.33347559150242
+2026-02-23:22:07:06,559 INFO     [psi4.driver.driver:646] [[ 0.         -0.         -0.02571707]
+ [ 0.01177238 -0.          0.01286188]
+ [-0.01177238 -0.          0.01286188]]

@@ -164,6 +164,7 @@ SharedMatrix SCFDeriv::compute_gradient()
     if (functional_->needs_xc()) {
         if (options_.get_str("REFERENCE") == "RKS") {
             potential_->set_D({Da_});
+            potential_->set_C({Ca_occ});
         } else {
             potential_->set_D({Da_, Db_});
         }

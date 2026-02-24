@@ -1,0 +1,46 @@
+#! Water SCF gradient using cuEST GPU-accelerated density-fitted J/K.
+#! Compares cuEST gradients against DF reference for RHF and B3LYP.
+
+molecule water {
+    symmetry c1
+    0 1
+    O  0.000000  0.000000  0.117369
+    H -0.756950  0.000000 -0.469476
+    H  0.756950  0.000000 -0.469476
+}
+
+set = {
+    basis sto-3g
+    reference rhf
+    df_scf_guess False
+    e_convergence 1e-10
+    d_convergence 1e-8
+}
+
+# --- Test 1: RHF/STO-3G gradient with DF ---
+set scf_type df
+g_hf_df = gradient('scf')
+
+# --- Test 2: RHF/STO-3G gradient with cuEST ---
+clean()
+clean_variables()
+set scf_type cuest
+g_hf_cuest = gradient('scf')
+
+compare_matrices(g_hf_df, g_hf_cuest, 5, "cuEST RHF/STO-3G gradient vs DF reference")  #TEST
+
+# --- Test 3: B3LYP/STO-3G gradient with DF ---
+clean()
+clean_variables()
+set scf_type df
+set dft_spherical_points 302
+set dft_radial_points 75
+g_b3lyp_df = gradient('b3lyp')
+
+# --- Test 4: B3LYP/STO-3G gradient with cuEST ---
+clean()
+clean_variables()
+set scf_type cuest
+g_b3lyp_cuest = gradient('b3lyp')
+
+compare_matrices(g_b3lyp_df, g_b3lyp_cuest, 5, "cuEST B3LYP/STO-3G gradient vs DF reference")  #TEST

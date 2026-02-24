@@ -1,0 +1,78 @@
+#! Water DFT with full GPU XC via cuEST.
+#! Tests GPU-accelerated XC potential and gradient against DF reference.
+#! B3LYP and PBE functionals verified for energy and gradient.
+
+import os
+os.environ['PSI4_CUEST_GPU_XC'] = '1'
+
+molecule water {
+    symmetry c1
+    0 1
+    O  0.000000  0.000000  0.117369
+    H -0.756950  0.000000 -0.469476
+    H  0.756950  0.000000 -0.469476
+}
+
+set = {
+    basis sto-3g
+    reference rhf
+    df_scf_guess False
+    e_convergence 1e-10
+    d_convergence 1e-8
+    dft_spherical_points 590
+    dft_radial_points 99
+}
+
+# --- Energy tests ---
+
+# B3LYP
+set scf_type df
+e_b3lyp_df = energy('b3lyp')
+
+clean()
+clean_variables()
+set scf_type cuest
+e_b3lyp_cuest = energy('b3lyp')
+
+compare_values(e_b3lyp_df, e_b3lyp_cuest, 6, "cuEST GPU-XC B3LYP energy vs DF")  #TEST
+
+# PBE
+clean()
+clean_variables()
+set scf_type df
+e_pbe_df = energy('pbe')
+
+clean()
+clean_variables()
+set scf_type cuest
+e_pbe_cuest = energy('pbe')
+
+compare_values(e_pbe_df, e_pbe_cuest, 6, "cuEST GPU-XC PBE energy vs DF")  #TEST
+
+# --- Gradient tests ---
+
+# B3LYP gradient
+clean()
+clean_variables()
+set scf_type df
+g_b3lyp_df = gradient('b3lyp')
+
+clean()
+clean_variables()
+set scf_type cuest
+g_b3lyp_cuest = gradient('b3lyp')
+
+compare_matrices(g_b3lyp_df, g_b3lyp_cuest, 5, "cuEST GPU-XC B3LYP gradient vs DF")  #TEST
+
+# PBE gradient
+clean()
+clean_variables()
+set scf_type df
+g_pbe_df = gradient('pbe')
+
+clean()
+clean_variables()
+set scf_type cuest
+g_pbe_cuest = gradient('pbe')
+
+compare_matrices(g_pbe_df, g_pbe_cuest, 5, "cuEST GPU-XC PBE gradient vs DF")  #TEST

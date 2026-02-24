@@ -27,6 +27,7 @@
  */
 
 #include "jk_grad.h"
+#include "cuESTJKGrad.h"
 
 #include "psi4/libqt/qt.h"
 #include "psi4/lib3index/3index.h"
@@ -114,6 +115,22 @@ std::shared_ptr<JKGrad> JKGrad::build_JKGrad(int deriv, std::shared_ptr<MintsHel
 
         return std::shared_ptr<JKGrad>(jk);
 
+    } else if (options.get_str("SCF_TYPE") == "CUEST") {
+#ifdef USING_cuEST
+        cuESTJKGrad* jk = new cuESTJKGrad(deriv, mints);
+
+        if (options["INTS_TOLERANCE"].has_changed())
+            jk->set_cutoff(options.get_double("INTS_TOLERANCE"));
+        if (options["PRINT"].has_changed())
+            jk->set_print(options.get_int("PRINT"));
+        if (options["DEBUG"].has_changed())
+            jk->set_debug(options.get_int("DEBUG"));
+        jk->set_condition(options.get_double("DF_FITTING_CONDITION"));
+
+        return std::shared_ptr<JKGrad>(jk);
+#else
+        throw PSIEXCEPTION("JKGrad::build_JKGrad: SCF_TYPE CUEST requires cuEST library");
+#endif
     } else {
         throw PSIEXCEPTION("JKGrad::build_JKGrad: Unknown SCF Type");
     }

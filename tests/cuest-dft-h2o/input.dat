@@ -1,0 +1,51 @@
+#! Water DFT using cuEST GPU-accelerated density-fitted J/K builds.
+#! Compares cuEST SCF_TYPE against standard DF reference energies
+#! for B3LYP and PBE functionals.
+
+# Reference DF energies obtained with SCF_TYPE DF on the same geometry.
+# cuEST handles J/K on GPU; XC potential is computed on CPU (VBase).
+# Energies should match DF to ~1e-7 or better.
+
+molecule water {
+    symmetry c1
+    0 1
+    O  0.000000  0.000000  0.117369
+    H -0.756950  0.000000 -0.469476
+    H  0.756950  0.000000 -0.469476
+}
+
+set = {
+    basis sto-3g
+    reference rhf
+    df_scf_guess False
+    e_convergence 1e-10
+    d_convergence 1e-8
+    dft_spherical_points 302
+    dft_radial_points 75
+}
+
+# --- Test 1: B3LYP/STO-3G with DF (reference) ---
+set scf_type df
+e_b3lyp_df = energy('b3lyp')
+
+# --- Test 2: B3LYP/STO-3G with cuEST ---
+clean()
+clean_variables()
+set scf_type cuest
+e_b3lyp_cuest = energy('b3lyp')
+
+compare_values(e_b3lyp_df, e_b3lyp_cuest, 6, "cuEST B3LYP/STO-3G energy vs DF reference")  #TEST
+
+# --- Test 3: PBE/STO-3G with DF (reference) ---
+clean()
+clean_variables()
+set scf_type df
+e_pbe_df = energy('pbe')
+
+# --- Test 4: PBE/STO-3G with cuEST ---
+clean()
+clean_variables()
+set scf_type cuest
+e_pbe_cuest = energy('pbe')
+
+compare_values(e_pbe_df, e_pbe_cuest, 6, "cuEST PBE/STO-3G energy vs DF reference")  #TEST

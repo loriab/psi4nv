@@ -1,0 +1,12 @@
+2026-02-23:21:41:46,527 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'REFERENCE': 'RHF', 'SCF_TYPE': 'DF', 'function_kwargs': {}}
+2026-02-23:21:41:46,529 INFO     [psi4.driver.driver:529] Compute energy(): method=b3lyp, basis=sto-3g, molecule=water, nre=9.189522606887968
+2026-02-23:21:41:47,108 INFO     [psi4.driver.driver:532] Return energy(): -75.31291567188548
+2026-02-23:21:41:47,120 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'CUEST', 'function_kwargs': {}}
+2026-02-23:21:41:47,122 INFO     [psi4.driver.driver:529] Compute energy(): method=b3lyp, basis=sto-3g, molecule=water, nre=9.189522606887968
+2026-02-23:21:41:47,618 INFO     [psi4.driver.driver:532] Return energy(): -75.3129156719067
+2026-02-23:21:41:47,630 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'DF', 'function_kwargs': {}}
+2026-02-23:21:41:47,632 INFO     [psi4.driver.driver:529] Compute energy(): method=pbe, basis=sto-3g, molecule=water, nre=9.189522606887968
+2026-02-23:21:41:47,950 INFO     [psi4.driver.driver:532] Return energy(): -75.22603414898077
+2026-02-23:21:41:47,961 INFO     [psi4.driver.task_planner:259] PLANNING Atomic:  keywords={'DFT_RADIAL_POINTS': 75, 'DFT_SPHERICAL_POINTS': 302, 'DF_SCF_GUESS': 0, 'D_CONVERGENCE': 1e-08, 'E_CONVERGENCE': 1e-10, 'SCF__INTS_TOLERANCE': 1e-12, 'REFERENCE': 'RHF', 'SCF_TYPE': 'CUEST', 'function_kwargs': {}}
+2026-02-23:21:41:47,962 INFO     [psi4.driver.driver:529] Compute energy(): method=pbe, basis=sto-3g, molecule=water, nre=9.189522606887968
+2026-02-23:21:41:48,290 INFO     [psi4.driver.driver:532] Return energy(): -75.22603414897192

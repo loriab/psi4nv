@@ -1,4 +1,5 @@
 list(APPEND sources
+  cuESTJKGrad.cc
   jk_grad.cc
   response.cc
   scf_grad.cc
@@ -14,6 +15,17 @@ if(TARGET BrianQC::static_wrapper)
   target_include_directories(scfgrad
     PUBLIC
       $<TARGET_PROPERTY:BrianQC::static_wrapper,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()
+
+if(TARGET cuEST::cuEST)
+  target_compile_definitions(scfgrad
+    PUBLIC
+      USING_cuEST
+    )
+  target_link_libraries(scfgrad
+    PUBLIC
+      cuEST::cuEST
     )
 endif()
 
