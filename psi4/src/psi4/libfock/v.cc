@@ -759,6 +759,12 @@ void VBase::cuest_xc_initialize() {
     if (options_.get_str("SCF_TYPE") != "CUEST") return;
     if (!functional_->needs_xc()) return;
 
+    const char* gpu_xc_env = std::getenv("PSI4_CUEST_GPU_XC");
+    if (!gpu_xc_env || std::string(gpu_xc_env) != "1") {
+        outfile->Printf("  cuEST XC: using Psi4 CPU XC (set PSI4_CUEST_GPU_XC=1 to enable GPU XC).\n");
+        return;
+    }
+
     int cuest_func = map_functional_to_cuest(functional_->name());
     if (cuest_func < 0) {
         outfile->Printf("  cuEST XC: functional \"%s\" not supported, falling back to CPU.\n", functional_->name().c_str());
