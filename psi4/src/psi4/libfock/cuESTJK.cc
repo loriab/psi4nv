@@ -84,6 +84,9 @@ void cuESTJK::destroy_cuest_objects() {
     free_workspace(primary_persistent_ws_);
     free_workspace(compute_temp_ws_);
 
+    cuestParametersDestroy(CUEST_DFCOULOMBCOMPUTE_PARAMETERS, coulomb_compute_params_);
+    cuestParametersDestroy(CUEST_DFSYMMETRICEXCHANGECOMPUTE_PARAMETERS, exchange_compute_params_);
+
     plan_built_ = false;
 }
 
@@ -168,6 +171,12 @@ void cuESTJK::preiterations() {
     exchange_max_ws_desc_.hostBufferSizeInBytes = 0;
     exchange_max_ws_desc_.deviceBufferSizeInBytes = static_cast<size_t>(2) * 1024 * 1024 * 1024;
 
+    CHECK_CUEST(cuestParametersCreate(
+        CUEST_DFCOULOMBCOMPUTE_PARAMETERS,
+        &coulomb_compute_params_));
+    CHECK_CUEST(cuestParametersCreate(
+        CUEST_DFSYMMETRICEXCHANGECOMPUTE_PARAMETERS,
+        &exchange_compute_params_));
     plan_built_ = true;
 }
 
@@ -195,7 +204,12 @@ void cuESTJK::compute_JK() {
 
     if (do_J_) {
         CHECK_CUEST(cuestDFCoulombComputeWorkspaceQuery(
-            cuest_handle, cuest_df_plan_, &j_temp_desc, d_D, d_J));
+            cuest_handle,
+            cuest_df_plan_,
+            coulomb_compute_params_,
+            &j_temp_desc,
+            d_D,
+            d_J));
         max_host = std::max(max_host, j_temp_desc.hostBufferSizeInBytes);
         max_device = std::max(max_device, j_temp_desc.deviceBufferSizeInBytes);
     }
@@ -206,8 +220,14 @@ void cuESTJK::compute_JK() {
             if (nocc == 0) continue;
 
             CHECK_CUEST(cuestDFSymmetricExchangeComputeWorkspaceQuery(
-                cuest_handle, cuest_df_plan_, &exchange_max_ws_desc_,
-                &k_temp_desc, static_cast<uint64_t>(nocc), nullptr, d_K));
+                cuest_handle,
+                cuest_df_plan_,
+                exchange_compute_params_,
+                &exchange_max_ws_desc_,
+                &k_temp_desc,
+                static_cast<uint64_t>(nocc),
+                nullptr,
+                d_K));
             max_host = std::max(max_host, k_temp_desc.hostBufferSizeInBytes);
             max_device = std::max(max_device, k_temp_desc.deviceBufferSizeInBytes);
         }
@@ -231,7 +251,12 @@ void cuESTJK::compute_JK() {
             cudaMemcpy(d_D, D_ao_[N]->get_pointer(), nbf2_bytes, cudaMemcpyHostToDevice);
             auto tc1 = clock::now();
             CHECK_CUEST(cuestDFCoulombCompute(
-                cuest_handle, cuest_df_plan_, &compute_temp_ws_, d_D, d_J));
+                cuest_handle,
+                cuest_df_plan_,
+                coulomb_compute_params_,
+                &compute_temp_ws_,
+                d_D,
+                d_J));
             cudaDeviceSynchronize();
             auto tc2 = clock::now();
             cudaMemcpy(J_ao_[N]->get_pointer(), d_J, nbf2_bytes, cudaMemcpyDeviceToHost);
@@ -265,9 +290,14 @@ void cuESTJK::compute_JK() {
                 auto tk1 = clock::now();
 
                 CHECK_CUEST(cuestDFSymmetricExchangeCompute(
-                    cuest_handle, cuest_df_plan_, &exchange_max_ws_desc_,
-                    &compute_temp_ws_, static_cast<uint64_t>(nocc),
-                    d_C, d_K));
+                    cuest_handle,
+                    cuest_df_plan_,
+                    exchange_compute_params_,
+                    &exchange_max_ws_desc_,
+                    &compute_temp_ws_,
+                    static_cast<uint64_t>(nocc),
+                    d_C,
+                    d_K));
                 cudaDeviceSynchronize();
                 auto tk2 = clock::now();
 
@@ -301,6 +331,7 @@ void cuESTJK::compute_JK() {
 }
 
 void cuESTJK::postiterations() {
+
     destroy_cuest_objects();
 }
 

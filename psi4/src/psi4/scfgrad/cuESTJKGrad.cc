@@ -138,15 +138,39 @@ void cuESTJKGrad::compute_gradient() {
     // J call: densityScale=2.0 (accounts for RHF Da→Dt doubling), coefficientScale=0.0
     if (do_J_) {
         cuestWorkspaceDescriptor_t j_temp_desc = {};
+        cuestDFSymmetricDerivativeComputeParameters_t derivative_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_DFSYMMETRICDERIVATIVECOMPUTE_PARAMETERS, &derivative_params));
         CHECK_CUEST(cuestDFSymmetricDerivativeComputeWorkspaceQuery(
-            cuest_handle, df_plan, &max_ws_desc, &j_temp_desc, 2.0, nullptr, 0.0, 0, nullptr, nullptr, nullptr));
+            cuest_handle,
+            df_plan,
+            derivative_params,
+            &max_ws_desc,
+            &j_temp_desc,
+            2.0,
+            nullptr,
+            0.0,
+            0,
+            nullptr,
+            nullptr,
+            nullptr));
 
         cuestWorkspace_t j_temp_ws = {};
         alloc_workspace(j_temp_desc, j_temp_ws);
 
         cudaMemset(d_grad, 0, grad_bytes);
-        CHECK_CUEST(cuestDFSymmetricDerivativeCompute(cuest_handle, df_plan, &max_ws_desc, &j_temp_ws, 2.0, d_Da, 0.0,
-                                                      0, nullptr, nullptr, d_grad));
+        CHECK_CUEST(cuestDFSymmetricDerivativeCompute(
+            cuest_handle,
+            df_plan,
+            derivative_params,
+            &max_ws_desc,
+            &j_temp_ws,
+            2.0,
+            d_Da,
+            0.0,
+            0,
+            nullptr,
+            nullptr,
+            d_grad));
         cudaDeviceSynchronize();
 
         std::vector<double> grad_host(natom * 3);
@@ -160,6 +184,7 @@ void cuESTJKGrad::compute_gradient() {
         }
 
         free_workspace(j_temp_ws);
+        cuestParametersDestroy(CUEST_DFSYMMETRICDERIVATIVECOMPUTE_PARAMETERS, derivative_params);
     }
 
     // === Compute K gradient ===
@@ -167,17 +192,40 @@ void cuESTJKGrad::compute_gradient() {
     // scf_grad.cc will multiply by -alpha externally
     if (do_K_ && nocc > 0) {
         uint64_t nocc64 = static_cast<uint64_t>(nocc);
-
+        cuestDFSymmetricExchangeComputeParameters_t exchange_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_DFSYMMETRICEXCHANGECOMPUTE_PARAMETERS, &exchange_params));
         cuestWorkspaceDescriptor_t k_temp_desc = {};
         CHECK_CUEST(cuestDFSymmetricDerivativeComputeWorkspaceQuery(
-            cuest_handle, df_plan, &max_ws_desc, &k_temp_desc, 0.0, nullptr, 1.0, 1, &nocc64, nullptr, nullptr));
+            cuest_handle,
+            df_plan,
+            exchange_params,
+            &max_ws_desc,
+            &k_temp_desc,
+            0.0,
+            nullptr,
+            1.0,
+            1,
+            &nocc64,
+            nullptr,
+            nullptr));
 
         cuestWorkspace_t k_temp_ws = {};
         alloc_workspace(k_temp_desc, k_temp_ws);
 
         cudaMemset(d_grad, 0, grad_bytes);
-        CHECK_CUEST(cuestDFSymmetricDerivativeCompute(cuest_handle, df_plan, &max_ws_desc, &k_temp_ws, 0.0, d_Da, 1.0,
-                                                      1, &nocc64, d_C, d_grad));
+        CHECK_CUEST(cuestDFSymmetricDerivativeCompute(
+            cuest_handle,
+            df_plan,
+            exchange_params,
+            &max_ws_desc,
+            &k_temp_ws,
+            0.0,
+            d_Da,
+            1.0,
+            1,
+            &nocc64,
+            d_C,
+            d_grad));
         cudaDeviceSynchronize();
 
         std::vector<double> grad_host(natom * 3);
@@ -191,6 +239,7 @@ void cuESTJKGrad::compute_gradient() {
         }
 
         free_workspace(k_temp_ws);
+        cuestParametersDestroy(CUEST_DFSYMMETRICEXCHANGECOMPUTE_PARAMETERS, exchange_params);
     }
 
     // === Cleanup ===

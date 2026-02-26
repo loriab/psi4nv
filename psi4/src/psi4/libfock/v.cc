@@ -1539,19 +1539,38 @@ void RV::compute_V(std::vector<SharedMatrix> ret) {
 
         auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
 
+        cuestXCPotentialRKSComputeParameters_t xc_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_XCPOTENTIALRKSCOMPUTE_PARAMETERS, &xc_params));
         cuestWorkspaceDescriptor_t temp_desc = {};
         CHECK_CUEST(cuestXCPotentialRKSComputeWorkspaceQuery(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
-            static_cast<uint64_t>(nocc), nullptr, nullptr, nullptr));
+            cuest_handle,
+            xc_plan,
+            &xc_params,
+            &max_ws_desc,
+            &temp_desc,
+            static_cast<uint64_t>(nocc),
+            nullptr,
+            nullptr,
+            nullptr));
 
         cuestWorkspace_t temp_ws = {};
         alloc_workspace(temp_desc, temp_ws);
 
         double xc_energy = 0.0;
         CHECK_CUEST(cuestXCPotentialRKSCompute(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
-            static_cast<uint64_t>(nocc), d_C, &xc_energy, d_Vxc));
+            cuest_handle,
+            xc_plan,
+            &xc_params,
+            &max_ws_desc,
+            &temp_ws,
+            static_cast<uint64_t>(nocc),
+            d_C,
+            &xc_energy,
+            d_Vxc));
         cudaDeviceSynchronize();
+
+        cuestParametersDestroy(CUEST_XCPOTENTIALRKSCOMPUTE_PARAMETERS, xc_params);
+
 
         // Download Vxc matrix
         cudaMemcpy(ret[0]->get_pointer(), d_Vxc, nbf2_bytes, cudaMemcpyDeviceToHost);
@@ -2305,17 +2324,32 @@ SharedMatrix RV::compute_gradient() {
         auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
 
         cuestWorkspaceDescriptor_t temp_desc = {};
+        cuestXCDerivativeRKSComputeParameters_t xc_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_XCDERIVATIVERKSCOMPUTE_PARAMETERS, &xc_params));
+
         CHECK_CUEST(cuestXCDerivativeRKSComputeWorkspaceQuery(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
-            static_cast<uint64_t>(nocc), nullptr, nullptr));
+            cuest_handle,
+            xc_plan,
+            xc_params,
+            &max_ws_desc,
+            &temp_desc,
+            static_cast<uint64_t>(nocc),
+            nullptr,
+            nullptr));
 
         cuestWorkspace_t temp_ws = {};
         alloc_workspace(temp_desc, temp_ws);
 
         cudaMemset(d_grad, 0, grad_bytes);
         CHECK_CUEST(cuestXCDerivativeRKSCompute(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
-            static_cast<uint64_t>(nocc), d_C, d_grad));
+            cuest_handle,
+            xc_plan,
+            xc_params,
+            &max_ws_desc,
+            &temp_ws,
+            static_cast<uint64_t>(nocc),
+            d_C,
+            d_grad));
         cudaDeviceSynchronize();
 
         auto xc_grad = std::make_shared<Matrix>("XC Gradient", natom, 3);

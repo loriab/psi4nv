@@ -33,6 +33,8 @@ class PSI_API cuESTJK : public JK {
     cuestWorkspace_t pair_persistent_ws_;
     cuestWorkspace_t df_persistent_ws_;
 
+    cuestDFCoulombComputeParameters_t coulomb_compute_params_;
+    cuestDFSymmetricExchangeComputeParameters_t exchange_compute_params_;
     cuestWorkspace_t compute_temp_ws_;
     cuestWorkspaceDescriptor_t exchange_max_ws_desc_;
 

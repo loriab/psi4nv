@@ -268,15 +268,28 @@ SharedMatrix SCFDeriv::compute_gradient()
         gradients_["Overlap"] = std::make_shared<Matrix>("Overlap Gradient", natom, 3);
         std::vector<double> grad_host(natom * 3);
 
+        cuestKineticDerivativeComputeParameters_t kin_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_KINETICDERIVATIVECOMPUTE_PARAMETERS, &kin_params));
+
         // Kinetic gradient: Tr[Dt * dT/dR]
         cuestWorkspaceDescriptor_t kin_t_desc = {};
         CHECK_CUEST(cuestKineticDerivativeComputeWorkspaceQuery(
-            cuest_handle, oe_plan, &kin_t_desc, nullptr, nullptr));
+            cuest_handle,
+            oe_plan,
+            kin_params,
+            &kin_t_desc,
+            nullptr,
+            nullptr));
         cuestWorkspace_t kin_ws = {};
         alloc_workspace(kin_t_desc, kin_ws);
 
         CHECK_CUEST(cuestKineticDerivativeCompute(
-            cuest_handle, oe_plan, &kin_ws, d_Dt, d_grad));
+            cuest_handle,
+            oe_plan,
+            kin_params,
+            &kin_ws,
+            d_Dt,
+            d_grad));
         cudaDeviceSynchronize();
 
         cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
@@ -287,6 +300,7 @@ SharedMatrix SCFDeriv::compute_gradient()
             Cp[A][2] = grad_host[3 * A + 2];
         }
         free_workspace(kin_ws);
+        cuestParametersDestroy(CUEST_KINETICDERIVATIVECOMPUTE_PARAMETERS, kin_params);
 
         // Potential gradient: Tr[Dt * dV/dR], nuclear charges as point charges
         std::vector<double> charges(natom);
@@ -303,17 +317,34 @@ SharedMatrix SCFDeriv::compute_gradient()
         cudaMemcpy(d_xyz, xyz.data(), xyz_bytes, cudaMemcpyHostToDevice);
         cudaMemcpy(d_q, charges.data(), q_bytes, cudaMemcpyHostToDevice);
 
+        cuestPotentialDerivativeComputeParameters_t pot_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_POTENTIALDERIVATIVECOMPUTE_PARAMETERS, &pot_params));
         cuestWorkspaceDescriptor_t pot_t_desc = {};
         CHECK_CUEST(cuestPotentialDerivativeComputeWorkspaceQuery(
-            cuest_handle, oe_plan, &pot_t_desc,
-            static_cast<uint64_t>(natom), nullptr, nullptr, nullptr, nullptr, nullptr));
+            cuest_handle,
+            oe_plan,
+            pot_params,
+            &pot_t_desc,
+            static_cast<uint64_t>(natom),
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr));
         cuestWorkspace_t pot_ws = {};
         alloc_workspace(pot_t_desc, pot_ws);
 
         CHECK_CUEST(cuestPotentialDerivativeCompute(
-            cuest_handle, oe_plan, &pot_ws,
-            static_cast<uint64_t>(natom), d_xyz, d_q,
-            d_Dt, d_grad, d_grad2));
+            cuest_handle,
+            oe_plan,
+            pot_params,
+            &pot_ws,
+            static_cast<uint64_t>(natom),
+            d_xyz,
+            d_q,
+            d_Dt,
+            d_grad,
+            d_grad2));
         cudaDeviceSynchronize();
 
         // cuEST computes d/dR[sum q*integral] (positive Coulomb potential);
@@ -333,16 +364,30 @@ SharedMatrix SCFDeriv::compute_gradient()
         cudaFree(d_q);
         cudaFree(d_xyz);
         free_workspace(pot_ws);
+        cuestParametersDestroy(CUEST_POTENTIALDERIVATIVECOMPUTE_PARAMETERS, pot_params);
+
+        cuestOverlapDerivativeComputeParameters_t ovl_params;
+        CHECK_CUEST(cuestParametersCreate(CUEST_OVERLAPDERIVATIVECOMPUTE_PARAMETERS, &ovl_params));
 
         // Overlap gradient: -Tr[W * dS/dR]
         cuestWorkspaceDescriptor_t ovl_t_desc = {};
         CHECK_CUEST(cuestOverlapDerivativeComputeWorkspaceQuery(
-            cuest_handle, oe_plan, &ovl_t_desc, nullptr, nullptr));
+            cuest_handle,
+            oe_plan,
+            ovl_params,
+            &ovl_t_desc,
+            nullptr,
+            nullptr));
         cuestWorkspace_t ovl_ws = {};
         alloc_workspace(ovl_t_desc, ovl_ws);
 
         CHECK_CUEST(cuestOverlapDerivativeCompute(
-            cuest_handle, oe_plan, &ovl_ws, d_W, d_grad));
+            cuest_handle,
+            oe_plan,
+            ovl_params,
+            &ovl_ws,
+            d_W,
+            d_grad));
         cudaDeviceSynchronize();
 
         cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
@@ -353,6 +398,7 @@ SharedMatrix SCFDeriv::compute_gradient()
             Sp[A][2] = -grad_host[3 * A + 2];
         }
         free_workspace(ovl_ws);
+        cuestParametersDestroy(CUEST_OVERLAPDERIVATIVECOMPUTE_PARAMETERS, ovl_params);
 
         // Cleanup
         cudaFree(d_grad2);
