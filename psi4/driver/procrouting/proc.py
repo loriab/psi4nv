@@ -1430,8 +1430,11 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
     and prepares any empirical dispersion.
 
     """
+    _tf = [time.perf_counter()]
+
     # Figure out functional and dispersion
     superfunc, _disp_functor = build_functional_and_disp(name, restricted=(reference in ["RKS", "RHF"]), **kwargs)
+    _tf.append(time.perf_counter())  # 1: after functional
 
     # Build the wavefunction
     core.prepare_options_for_module("SCF")
@@ -1448,6 +1451,7 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
 
     if _disp_functor and _disp_functor.engine != 'nl':
         wfn._disp_functor = _disp_functor
+    _tf.append(time.perf_counter())  # 2: after wfn constructor
 
     # Set the DF basis sets
     df_needed = core.get_global_option("SCF_TYPE") in ["DF", "MEM_DF", "DISK_DF", "CUEST"]
@@ -1467,6 +1471,7 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
         wfn.set_basisset("DF_BASIS_SCF", aux_basis)
     else:
         wfn.set_basisset("DF_BASIS_SCF", core.BasisSet.zero_ao_basis_set())
+    _tf.append(time.perf_counter())  # 3: after DF basis
 
     # Set the relativistic basis sets
     if core.get_global_option("RELATIVISTIC") in ["X2C", "DKH"]:
@@ -1494,11 +1499,21 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
                                                    return_atomlist=True)
             wfn.set_sad_fitting_basissets(sad_fitting_list)
             optstash.restore()
+    _tf.append(time.perf_counter())  # 4: after SAD basis sets
 
     if core.get_option("SCF", "GUESS") == "SAPGAU":
         # Populate sapgau basis
         sapgau = core.BasisSet.build(wfn.molecule(), "SAPGAU_BASIS", core.get_global_option("SAPGAU_BASIS"))
         wfn.set_basisset("SAPGAU", sapgau)
+
+    _tf.append(time.perf_counter())  # 5: end
+    core.print_out("\n  ==> Wfn Factory Timing <==\n\n")
+    core.print_out("    Functional:      %7.3fs\n" % (_tf[1] - _tf[0]))
+    core.print_out("    Wfn constructor: %7.3fs\n" % (_tf[2] - _tf[1]))
+    core.print_out("    DF basis:        %7.3fs\n" % (_tf[3] - _tf[2]))
+    core.print_out("    SAD bases:       %7.3fs\n" % (_tf[4] - _tf[3]))
+    core.print_out("    Other:           %7.3fs\n" % (_tf[5] - _tf[4]))
+    core.print_out("    Total factory:   %7.3fs\n\n" % (_tf[5] - _tf[0]))
 
     if hasattr(core, "EXTERN") and 'external_potentials' in kwargs:
         core.print_out("\n  Warning! Both an external potential EXTERN object and the external_potential" +

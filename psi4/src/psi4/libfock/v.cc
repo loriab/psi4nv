@@ -26,6 +26,8 @@
  * @END LICENSE
  */
 
+#include <chrono>
+
 #include "v.h"
 #include "cubature.h"
 #include "points.h"
@@ -881,6 +883,21 @@ void VBase::cuest_xc_initialize() {
 }
 
 void VBase::cuest_xc_cleanup() {
+    // Free cached device buffers
+    if (cuest_xc_d_C_) { cudaFree(cuest_xc_d_C_); cuest_xc_d_C_ = nullptr; cuest_xc_d_C_bytes_ = 0; }
+    if (cuest_xc_d_Vxc_) { cudaFree(cuest_xc_d_Vxc_); cuest_xc_d_Vxc_ = nullptr; cuest_xc_d_Vxc_bytes_ = 0; }
+    if (cuest_xc_d_grad_) { cudaFree(cuest_xc_d_grad_); cuest_xc_d_grad_ = nullptr; cuest_xc_d_grad_bytes_ = 0; }
+
+    cuestWorkspace_t ws;
+
+    // Free cached temp workspaces
+    ws = to_cuest_ws(cuest_xc_temp_ws_);
+    free_workspace(ws);
+    cuest_xc_temp_ws_ = {};
+    ws = to_cuest_ws(cuest_xc_grad_temp_ws_);
+    free_workspace(ws);
+    cuest_xc_grad_temp_ws_ = {};
+
     if (cuest_xc_plan_) {
         cuestXCIntPlanDestroy(static_cast<cuestXCIntPlan_t>(cuest_xc_plan_));
         cuest_xc_plan_ = nullptr;
@@ -897,8 +914,6 @@ void VBase::cuest_xc_cleanup() {
     }
     for (auto& s : cuest_xc_shells_) cuestAOShellDestroy(static_cast<cuestAOShell_t>(s));
     cuest_xc_shells_.clear();
-
-    cuestWorkspace_t ws;
 
     ws = to_cuest_ws(cuest_xc_plan_ws_);
     free_workspace(ws);
@@ -1515,9 +1530,12 @@ void RV::compute_V(std::vector<SharedMatrix> ret) {
     // => cuEST GPU XC <=
 #ifdef USING_cuEST
     if (cuest_xc_enabled_ && !C_AO_.empty()) {
+        auto t_gpu0 = std::chrono::high_resolution_clock::now();
+
         int nbf = primary_->nbf();
         int nocc = C_AO_[0]->colspi()[0];
-        size_t nbf2_bytes = static_cast<size_t>(nbf) * nbf * sizeof(double);
+        size_t C_bytes = static_cast<size_t>(nocc) * nbf * sizeof(double);
+        size_t Vxc_bytes = static_cast<size_t>(nbf) * nbf * sizeof(double);
 
         // Transpose C_occ to row-major (nocc × nbf) for cuEST
         std::vector<double> C_row_major(nocc * nbf);
@@ -1527,38 +1545,63 @@ void RV::compute_V(std::vector<SharedMatrix> ret) {
                 C_row_major[i * nbf + mu] = Cp[mu][i];
             }
         }
+        auto t_gpu1 = std::chrono::high_resolution_clock::now();
 
-        double* d_C = nullptr;
-        double* d_Vxc = nullptr;
-        cudaMalloc(reinterpret_cast<void**>(&d_C), static_cast<size_t>(nocc) * nbf * sizeof(double));
-        cudaMalloc(reinterpret_cast<void**>(&d_Vxc), nbf2_bytes);
-        cudaMemcpy(d_C, C_row_major.data(), static_cast<size_t>(nocc) * nbf * sizeof(double), cudaMemcpyHostToDevice);
+        // Lazily allocate device buffers (reused across SCF iterations)
+        if (!cuest_xc_d_C_ || cuest_xc_d_C_bytes_ < C_bytes) {
+            if (cuest_xc_d_C_) cudaFree(cuest_xc_d_C_);
+            cudaMalloc(reinterpret_cast<void**>(&cuest_xc_d_C_), C_bytes);
+            cuest_xc_d_C_bytes_ = C_bytes;
+        }
+        if (!cuest_xc_d_Vxc_ || cuest_xc_d_Vxc_bytes_ < Vxc_bytes) {
+            if (cuest_xc_d_Vxc_) cudaFree(cuest_xc_d_Vxc_);
+            cudaMalloc(reinterpret_cast<void**>(&cuest_xc_d_Vxc_), Vxc_bytes);
+            cuest_xc_d_Vxc_bytes_ = Vxc_bytes;
+        }
+
+        cudaMemcpy(cuest_xc_d_C_, C_row_major.data(), C_bytes, cudaMemcpyHostToDevice);
+        auto t_gpu2 = std::chrono::high_resolution_clock::now();
+
+        // Lazily allocate temp workspace (reused across SCF iterations)
+        auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
+        if (cuest_xc_temp_ws_.deviceBuffer == 0) {
+            cuestWorkspaceDescriptor_t max_ws_desc = {};
+            max_ws_desc.deviceBufferSizeInBytes = static_cast<size_t>(2) * 1024 * 1024 * 1024;
+
+            cuestWorkspaceDescriptor_t temp_desc = {};
+            CHECK_CUEST(cuestXCPotentialRKSComputeWorkspaceQuery(
+                cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
+                static_cast<uint64_t>(nocc), nullptr, nullptr, nullptr));
+
+            cuestWorkspace_t temp_ws = {};
+            alloc_workspace(temp_desc, temp_ws);
+            from_cuest_ws(temp_ws, cuest_xc_temp_ws_);
+        }
+        auto t_gpu3 = std::chrono::high_resolution_clock::now();
 
         cuestWorkspaceDescriptor_t max_ws_desc = {};
         max_ws_desc.deviceBufferSizeInBytes = static_cast<size_t>(2) * 1024 * 1024 * 1024;
 
-        auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
-
-        cuestWorkspaceDescriptor_t temp_desc = {};
-        CHECK_CUEST(cuestXCPotentialRKSComputeWorkspaceQuery(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
-            static_cast<uint64_t>(nocc), nullptr, nullptr, nullptr));
-
-        cuestWorkspace_t temp_ws = {};
-        alloc_workspace(temp_desc, temp_ws);
-
+        cuestWorkspace_t temp_ws = to_cuest_ws(cuest_xc_temp_ws_);
         double xc_energy = 0.0;
         CHECK_CUEST(cuestXCPotentialRKSCompute(
             cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
-            static_cast<uint64_t>(nocc), d_C, &xc_energy, d_Vxc));
+            static_cast<uint64_t>(nocc), cuest_xc_d_C_, &xc_energy, cuest_xc_d_Vxc_));
         cudaDeviceSynchronize();
+        auto t_gpu4 = std::chrono::high_resolution_clock::now();
 
         // Download Vxc matrix
-        cudaMemcpy(ret[0]->get_pointer(), d_Vxc, nbf2_bytes, cudaMemcpyDeviceToHost);
+        cudaMemcpy(ret[0]->get_pointer(), cuest_xc_d_Vxc_, Vxc_bytes, cudaMemcpyDeviceToHost);
+        auto t_gpu5 = std::chrono::high_resolution_clock::now();
 
-        free_workspace(temp_ws);
-        cudaFree(d_Vxc);
-        cudaFree(d_C);
+        double transpose_ms = std::chrono::duration<double, std::milli>(t_gpu1 - t_gpu0).count();
+        double alloc_h2d_ms = std::chrono::duration<double, std::milli>(t_gpu2 - t_gpu1).count();
+        double ws_ms = std::chrono::duration<double, std::milli>(t_gpu3 - t_gpu2).count();
+        double compute_ms = std::chrono::duration<double, std::milli>(t_gpu4 - t_gpu3).count();
+        double d2h_ms = std::chrono::duration<double, std::milli>(t_gpu5 - t_gpu4).count();
+        double total_ms = std::chrono::duration<double, std::milli>(t_gpu5 - t_gpu0).count();
+        outfile->Printf("    GPU V(XC): total=%7.1fms | transpose=%5.1fms alloc+H2D=%5.1fms ws=%5.1fms compute=%7.1fms D2H=%5.1fms\n",
+                        total_ms, transpose_ms, alloc_h2d_ms, ws_ms, compute_ms, d2h_ms);
 
         quad_values_["VV10"] = 0.0;
         quad_values_["FUNCTIONAL"] = xc_energy;
@@ -2280,9 +2323,12 @@ SharedMatrix RV::compute_gradient() {
 
 #ifdef USING_cuEST
     if (cuest_xc_enabled_ && !C_AO_.empty()) {
+        auto t_gpu0 = std::chrono::high_resolution_clock::now();
+
         int natom = primary_->molecule()->natom();
         int nbf = primary_->nbf();
         int nocc = C_AO_[0]->colspi()[0];
+        size_t C_bytes = static_cast<size_t>(nocc) * nbf * sizeof(double);
         size_t grad_bytes = static_cast<size_t>(natom) * 3 * sizeof(double);
 
         std::vector<double> C_row_major(nocc * nbf);
@@ -2292,35 +2338,54 @@ SharedMatrix RV::compute_gradient() {
                 C_row_major[i * nbf + mu] = Cp[mu][i];
             }
         }
+        auto t_gpu1 = std::chrono::high_resolution_clock::now();
 
-        double* d_C = nullptr;
-        double* d_grad = nullptr;
-        cudaMalloc(reinterpret_cast<void**>(&d_C), static_cast<size_t>(nocc) * nbf * sizeof(double));
-        cudaMalloc(reinterpret_cast<void**>(&d_grad), grad_bytes);
-        cudaMemcpy(d_C, C_row_major.data(), static_cast<size_t>(nocc) * nbf * sizeof(double), cudaMemcpyHostToDevice);
+        // Lazily allocate device buffers (reused across calls)
+        if (!cuest_xc_d_C_ || cuest_xc_d_C_bytes_ < C_bytes) {
+            if (cuest_xc_d_C_) cudaFree(cuest_xc_d_C_);
+            cudaMalloc(reinterpret_cast<void**>(&cuest_xc_d_C_), C_bytes);
+            cuest_xc_d_C_bytes_ = C_bytes;
+        }
+        if (!cuest_xc_d_grad_ || cuest_xc_d_grad_bytes_ < grad_bytes) {
+            if (cuest_xc_d_grad_) cudaFree(cuest_xc_d_grad_);
+            cudaMalloc(reinterpret_cast<void**>(&cuest_xc_d_grad_), grad_bytes);
+            cuest_xc_d_grad_bytes_ = grad_bytes;
+        }
+
+        cudaMemcpy(cuest_xc_d_C_, C_row_major.data(), C_bytes, cudaMemcpyHostToDevice);
+        auto t_gpu2 = std::chrono::high_resolution_clock::now();
+
+        // Lazily allocate grad temp workspace
+        auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
+        if (cuest_xc_grad_temp_ws_.deviceBuffer == 0) {
+            cuestWorkspaceDescriptor_t max_ws_desc = {};
+            max_ws_desc.deviceBufferSizeInBytes = static_cast<size_t>(2) * 1024 * 1024 * 1024;
+
+            cuestWorkspaceDescriptor_t temp_desc = {};
+            CHECK_CUEST(cuestXCDerivativeRKSComputeWorkspaceQuery(
+                cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
+                static_cast<uint64_t>(nocc), nullptr, nullptr));
+
+            cuestWorkspace_t temp_ws = {};
+            alloc_workspace(temp_desc, temp_ws);
+            from_cuest_ws(temp_ws, cuest_xc_grad_temp_ws_);
+        }
+        auto t_gpu3 = std::chrono::high_resolution_clock::now();
 
         cuestWorkspaceDescriptor_t max_ws_desc = {};
         max_ws_desc.deviceBufferSizeInBytes = static_cast<size_t>(2) * 1024 * 1024 * 1024;
 
-        auto xc_plan = static_cast<cuestXCIntPlan_t>(cuest_xc_plan_);
-
-        cuestWorkspaceDescriptor_t temp_desc = {};
-        CHECK_CUEST(cuestXCDerivativeRKSComputeWorkspaceQuery(
-            cuest_handle, xc_plan, &max_ws_desc, &temp_desc,
-            static_cast<uint64_t>(nocc), nullptr, nullptr));
-
-        cuestWorkspace_t temp_ws = {};
-        alloc_workspace(temp_desc, temp_ws);
-
-        cudaMemset(d_grad, 0, grad_bytes);
+        cuestWorkspace_t temp_ws = to_cuest_ws(cuest_xc_grad_temp_ws_);
+        cudaMemset(cuest_xc_d_grad_, 0, grad_bytes);
         CHECK_CUEST(cuestXCDerivativeRKSCompute(
             cuest_handle, xc_plan, &max_ws_desc, &temp_ws,
-            static_cast<uint64_t>(nocc), d_C, d_grad));
+            static_cast<uint64_t>(nocc), cuest_xc_d_C_, cuest_xc_d_grad_));
         cudaDeviceSynchronize();
+        auto t_gpu4 = std::chrono::high_resolution_clock::now();
 
         auto xc_grad = std::make_shared<Matrix>("XC Gradient", natom, 3);
         std::vector<double> grad_host(natom * 3);
-        cudaMemcpy(grad_host.data(), d_grad, grad_bytes, cudaMemcpyDeviceToHost);
+        cudaMemcpy(grad_host.data(), cuest_xc_d_grad_, grad_bytes, cudaMemcpyDeviceToHost);
 
         double** Gp = xc_grad->pointer();
         for (int A = 0; A < natom; A++) {
@@ -2328,10 +2393,16 @@ SharedMatrix RV::compute_gradient() {
             Gp[A][1] = grad_host[3 * A + 1];
             Gp[A][2] = grad_host[3 * A + 2];
         }
+        auto t_gpu5 = std::chrono::high_resolution_clock::now();
 
-        free_workspace(temp_ws);
-        cudaFree(d_grad);
-        cudaFree(d_C);
+        double transpose_ms = std::chrono::duration<double, std::milli>(t_gpu1 - t_gpu0).count();
+        double alloc_h2d_ms = std::chrono::duration<double, std::milli>(t_gpu2 - t_gpu1).count();
+        double ws_ms = std::chrono::duration<double, std::milli>(t_gpu3 - t_gpu2).count();
+        double compute_ms = std::chrono::duration<double, std::milli>(t_gpu4 - t_gpu3).count();
+        double d2h_ms = std::chrono::duration<double, std::milli>(t_gpu5 - t_gpu4).count();
+        double total_ms = std::chrono::duration<double, std::milli>(t_gpu5 - t_gpu0).count();
+        outfile->Printf("    GPU XC grad: total=%7.1fms | transpose=%5.1fms alloc+H2D=%5.1fms ws=%5.1fms compute=%7.1fms D2H=%5.1fms\n",
+                        total_ms, transpose_ms, alloc_h2d_ms, ws_ms, compute_ms, d2h_ms);
 
         return xc_grad;
     }

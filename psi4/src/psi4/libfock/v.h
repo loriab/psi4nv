@@ -114,6 +114,16 @@ class PSI_API VBase {
     void* cuest_xc_plan_ = nullptr;
     CuESTWorkspace cuest_xc_plan_ws_ = {};
 
+    // Cached device buffers for GPU XC (avoid per-iteration cudaMalloc/cudaFree)
+    double* cuest_xc_d_C_ = nullptr;
+    size_t cuest_xc_d_C_bytes_ = 0;
+    double* cuest_xc_d_Vxc_ = nullptr;
+    size_t cuest_xc_d_Vxc_bytes_ = 0;
+    double* cuest_xc_d_grad_ = nullptr;
+    size_t cuest_xc_d_grad_bytes_ = 0;
+    CuESTWorkspace cuest_xc_temp_ws_ = {};
+    CuESTWorkspace cuest_xc_grad_temp_ws_ = {};
+
     void cuest_xc_initialize();
     void cuest_xc_cleanup();
 #endif

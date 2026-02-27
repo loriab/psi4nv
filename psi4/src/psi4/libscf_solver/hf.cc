@@ -27,6 +27,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -96,6 +97,7 @@ HF::HF(SharedWavefunction ref_wfn, std::shared_ptr<SuperFunctional> func, Option
 HF::~HF() {}
 
 void HF::common_init() {
+    auto _t_hf_init0 = std::chrono::high_resolution_clock::now();
     attempt_number_ = 1;
     reset_occ_ = false;
     sad_ = false;
@@ -267,11 +269,16 @@ void HF::common_init() {
     // CPHF info
     cphf_nfock_builds_ = 0;
     cphf_converged_ = false;
+
+    auto _t_hf_init1 = std::chrono::high_resolution_clock::now();
+    double hf_init_ms = std::chrono::duration<double, std::milli>(_t_hf_init1 - _t_hf_init0).count();
+    outfile->Printf("    HF::common_init: %7.1fms\n", hf_init_ms);
 }
 
 void HF::subclass_init() {
-    // DFT stuff
+    auto t0 = std::chrono::high_resolution_clock::now();
     setup_potential();
+    auto t1 = std::chrono::high_resolution_clock::now();
 
     if (V_potential() != nullptr) {
         // Do the GRAC
@@ -284,6 +291,10 @@ void HF::subclass_init() {
             V_potential()->print_header();
         }
     }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double setup_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    double header_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    outfile->Printf("    HF::subclass_init: setup_potential=%7.1fms  print_header=%7.1fms\n", setup_ms, header_ms);
 }
 
 void HF::damping_update(double damping_percentage) {
