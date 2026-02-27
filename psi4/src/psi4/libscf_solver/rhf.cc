@@ -28,6 +28,7 @@
 
 #include <any>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -45,6 +46,7 @@
 #include "psi4/libdpd/dpd.h"
 #include "psi4/libfock/jk.h"
 #include "psi4/libfock/v.h"
+#include "psi4/libqt/qt.h"
 #include "psi4/libfunctional/superfunctional.h"
 #include "psi4/libiwl/iwl.hpp"
 #include "psi4/libmints/factory.h"
@@ -186,20 +188,30 @@ void RHF::form_V() {
     Vb_ = Va_;
 }
 void RHF::form_G() {
+    auto t_v_start = std::chrono::high_resolution_clock::now();
+
+    timer_on("HF: V(XC)");
     if (functional_->needs_xc()) {
         form_V();
         G_->copy(Va_);
     } else {
         G_->zero();
     }
+    timer_off("HF: V(XC)");
+
+    auto t_jk_start = std::chrono::high_resolution_clock::now();
 
     /// Push the C matrix on
     std::vector<SharedMatrix>& C = jk_->C_left();
     C.clear();
     C.push_back(Ca_subset("SO", "OCC"));
 
+    timer_on("HF: JK");
     // Run the JK object
     jk_->compute();
+    timer_off("HF: JK");
+
+    auto t_jk_end = std::chrono::high_resolution_clock::now();
 
     // Pull the J and K matrices off
     const std::vector<SharedMatrix>& J = jk_->J();
@@ -241,6 +253,12 @@ void RHF::form_G() {
     } else {
         wK_->zero();
     }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double v_ms = std::chrono::duration<double, std::milli>(t_jk_start - t_v_start).count();
+    double jk_ms = std::chrono::duration<double, std::milli>(t_jk_end - t_jk_start).count();
+    double combine_ms = std::chrono::duration<double, std::milli>(t_end - t_jk_end).count();
+    outfile->Printf("    form_G breakdown: V(XC)=%7.1fms  JK=%7.1fms  combine=%5.1fms\n", v_ms, jk_ms, combine_ms);
 }
 
 void RHF::form_F() {
