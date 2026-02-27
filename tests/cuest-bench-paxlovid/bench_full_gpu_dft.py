@@ -26,6 +26,8 @@ args = parser.parse_args()
 
 nthreads = args.nthreads
 
+os.environ["PSI4_CUEST_GPU_XC"] = "1"
+
 stage_lib = os.path.join(os.path.dirname(__file__), "..", "..", "objdir", "stage", "lib")
 if os.path.isdir(stage_lib):
     sys.path.insert(0, os.path.abspath(stage_lib))

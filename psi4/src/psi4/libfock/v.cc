@@ -853,6 +853,14 @@ void VBase::cuest_xc_initialize() {
     CHECK_CUEST(cuestParametersConfigure(CUEST_XCINTPLAN_PARAMETERS, xc_params,
         CUEST_XCINTPLAN_PARAMETERS_DERIVATIVE_LEVEL, &deriv_level, sizeof(int32_t)));
 
+    double collocation_threshold = options_.get_double("DFT_BASIS_TOLERANCE");
+    CHECK_CUEST(cuestParametersConfigure(CUEST_XCINTPLAN_PARAMETERS, xc_params,
+        CUEST_XCINTPLAN_PARAMETERS_THRESHOLD_COLLOCATION, &collocation_threshold, sizeof(double)));
+
+    int32_t xc_nthreads = static_cast<int32_t>(num_threads_);
+    CHECK_CUEST(cuestParametersConfigure(CUEST_XCINTPLAN_PARAMETERS, xc_params,
+        CUEST_XCINTPLAN_PARAMETERS_NUM_THREADS, &xc_nthreads, sizeof(int32_t)));
+
     auto func_enum = static_cast<cuestXCIntPlanParametersFunctional_t>(cuest_func);
 
     cuestWorkspaceDescriptor_t xc_p_desc = {}, xc_t_desc = {};
@@ -878,8 +886,9 @@ void VBase::cuest_xc_initialize() {
     cuestParametersDestroy(CUEST_XCINTPLAN_PARAMETERS, xc_params);
 
     cuest_xc_enabled_ = true;
-    outfile->Printf("  cuEST XC: GPU-accelerated %s XC enabled (%d radial, %d angular points per atom).\n",
-                    functional_->name().c_str(), nrad, nang);
+    outfile->Printf("  cuEST XC: GPU-accelerated %s XC enabled (%d radial, %d angular points per atom, "
+                    "collocation_thresh=%.1e, nthreads=%d).\n",
+                    functional_->name().c_str(), nrad, nang, collocation_threshold, xc_nthreads);
 }
 
 void VBase::cuest_xc_cleanup() {
