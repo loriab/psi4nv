@@ -11,3 +11,11 @@ if(TARGET gauxc::gauxc)
       $<TARGET_PROPERTY:gauxc::gauxc,INTERFACE_INCLUDE_DIRECTORIES>
     )
 endif()
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(dfmp2
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

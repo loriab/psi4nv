@@ -57,3 +57,11 @@ list(APPEND sources
 psi4_add_module(bin occ sources)
 
 target_link_libraries(occ PUBLIC diis)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(occ
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

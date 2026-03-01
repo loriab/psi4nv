@@ -42,3 +42,11 @@ foreach(dir_name IN LISTS _ccmodules)
 endforeach ()
 
 set_property(GLOBAL APPEND PROPERTY BINLIST cc)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(cc
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

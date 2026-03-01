@@ -39,4 +39,11 @@ if(TARGET gauxc::gauxc)
     )
 endif()
 
+if(TARGET cuEST::cuEST)
+  target_link_libraries(sapt_solver
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+
 

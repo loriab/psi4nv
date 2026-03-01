@@ -80,3 +80,11 @@ list(APPEND sources
   updater_mk.cc
   )
 psi4_add_module(bin psimrcc sources)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(psimrcc
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

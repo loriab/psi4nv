@@ -9,3 +9,11 @@ list(APPEND sources
 psi4_add_module(bin dlpno sources)
 
 target_link_libraries(dlpno PUBLIC diis)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(dlpno
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

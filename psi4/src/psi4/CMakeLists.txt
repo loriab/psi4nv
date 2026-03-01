@@ -1,3 +1,11 @@
+if(TARGET cuEST::cuEST)
+  add_compile_definitions(USING_cuEST)
+endif()
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(cuEST::cuEST)
+endif()
+
 foreach(dir_name
   lib3index
   libciomr
@@ -49,3 +57,4 @@ foreach(dir_name
   )
   add_subdirectory(${dir_name})
 endforeach ()
+

@@ -147,6 +147,14 @@ if(TARGET cuEST::cuEST)
     PRIVATE
       cuEST::cuEST
     )
+  target_compile_definitions(l2export
+    PRIVATE
+      USING_cuEST
+    )
+  target_link_libraries(l2export
+    PRIVATE
+      cuEST::cuEST
+    )
 endif()
 
 if(TARGET IntegratorXX::IntegratorXX)

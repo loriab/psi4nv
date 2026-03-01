@@ -51,3 +51,11 @@ endif ()
 psi4_add_module(bin dct sources)
 
 target_link_libraries(dct PUBLIC diis)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(dct
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+

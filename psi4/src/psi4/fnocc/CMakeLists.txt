@@ -18,3 +18,11 @@ list(APPEND sources
   linear.cc
   )
 psi4_add_module(bin fnocc sources)
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(fnocc
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+
