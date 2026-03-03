@@ -105,6 +105,9 @@ target_link_libraries(core
     tgt::lapack # OpenMP flags to core.cc
   )
 
+if(ENABLE_cuEST)
+    target_link_libraries(core PRIVATE CUDA::cublas CUDA::cusolver)
+endif()
 if(TARGET ECPINT::ecpint)
   target_compile_definitions(core
     PUBLIC
