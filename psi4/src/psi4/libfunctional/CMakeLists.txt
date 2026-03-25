@@ -9,3 +9,10 @@ target_link_libraries(functional
   PUBLIC
     Libxc::xc
   )
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(functional
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
