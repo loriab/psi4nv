@@ -25,3 +25,11 @@ if(TARGET ECPINT::ecpint)
       ECPINT::ecpint
     )
 endif()
+
+if(TARGET cuEST::cuEST)
+  target_link_libraries(fock
+    PUBLIC
+      cuEST::cuEST
+    )
+endif()
+
