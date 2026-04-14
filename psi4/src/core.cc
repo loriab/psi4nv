@@ -260,6 +260,7 @@ void export_mints(py::module&);
 void export_misc(py::module&);
 void export_oeprop(py::module&);
 void export_pcm(py::module&);
+void export_cuestpcm(py::module&);
 void export_plugins(py::module&);
 void export_psio(py::module&);
 void export_wavefunction(py::module&);
@@ -1350,6 +1351,10 @@ PYBIND11_MODULE(core, core) {
 #ifdef USING_PCMSolver
     // PCM
     export_pcm(core);
+#endif
+#ifdef USING_cuEST
+    // cuEST PCM
+    export_cuestpcm(core);
 #endif
 
     // CubeProperties
