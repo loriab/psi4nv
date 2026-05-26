@@ -133,21 +133,24 @@ void UHF::common_init() {
 }
 
 void UHF::finalize() {
-    // Form lagrangian
-    for (int h = 0; h < nirrep_; ++h) {
-        for (int m = 0; m < Lagrangian_->rowdim(h); ++m) {
-            for (int n = 0; n < Lagrangian_->coldim(h); ++n) {
-                double sum = 0.0;
-                for (int i = 0; i < nalphapi_[h]; ++i) {
-                    sum += epsilon_a_->get(h, i) * Ca_->get(h, m, i) * Ca_->get(h, n, i);
-                }
-                for (int i = 0; i < nbetapi_[h]; ++i) {
-                    sum += epsilon_b_->get(h, i) * Cb_->get(h, m, i) * Cb_->get(h, n, i);
-                }
-                Lagrangian_->set(h, m, n, sum);
-            }
-        }
-    }
+    // ACS removed this in 05/26, as it is slows down cuEST runs and appears to not be needed: scfgrad
+    // builds its own energy weighted density matrix, and dfocc / dct have their own mechanism for setting it
+
+    //// Form lagrangian
+    //for (int h = 0; h < nirrep_; ++h) {
+    //    for (int m = 0; m < Lagrangian_->rowdim(h); ++m) {
+    //        for (int n = 0; n < Lagrangian_->coldim(h); ++n) {
+    //            double sum = 0.0;
+    //            for (int i = 0; i < nalphapi_[h]; ++i) {
+    //                sum += epsilon_a_->get(h, i) * Ca_->get(h, m, i) * Ca_->get(h, n, i);
+    //            }
+    //            for (int i = 0; i < nbetapi_[h]; ++i) {
+    //                sum += epsilon_b_->get(h, i) * Cb_->get(h, m, i) * Cb_->get(h, n, i);
+    //            }
+    //            Lagrangian_->set(h, m, n, sum);
+    //        }
+    //    }
+    //}
 
     Da_old_.reset();
     Db_old_.reset();

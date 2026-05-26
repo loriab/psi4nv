@@ -124,18 +124,22 @@ void RHF::common_init() {
 }
 
 void RHF::finalize() {
-    // Form lagrangian
-    for (int h = 0; h < nirrep_; ++h) {
-        for (int m = 0; m < Lagrangian_->rowdim(h); ++m) {
-            for (int n = 0; n < Lagrangian_->coldim(h); ++n) {
-                double sum = 0.0;
-                for (int i = 0; i < nalphapi_[h]; ++i) {
-                    sum += epsilon_a_->get(h, i) * Ca_->get(h, m, i) * Ca_->get(h, n, i);
-                }
-                Lagrangian_->set(h, m, n, sum);
-            }
-        }
-    }
+
+    // ACS removed this in 05/26, as it is slows down cuEST runs and appears to not be needed: scfgrad
+    // builds its own energy weighted density matrix, and dfocc / dct have their own mechanism for setting it
+
+    //// Form lagrangian
+    //for (int h = 0; h < nirrep_; ++h) {
+    //    for (int m = 0; m < Lagrangian_->rowdim(h); ++m) {
+    //        for (int n = 0; n < Lagrangian_->coldim(h); ++n) {
+    //            double sum = 0.0;
+    //            for (int i = 0; i < nalphapi_[h]; ++i) {
+    //                sum += epsilon_a_->get(h, i) * Ca_->get(h, m, i) * Ca_->get(h, n, i);
+    //            }
+    //            Lagrangian_->set(h, m, n, sum);
+    //        }
+    //    }
+    //}
 
     Dold_.reset();
     G_.reset();
