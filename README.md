@@ -1,3 +1,5 @@
+### Note [12 Aug 2026]: Psi4 + Nvidia cuEST development and build guidance have moved to https://github.com/psi4/psi4/pull/3479
+
 # Psi4 + Nvidia cuEST Integration
 
 ## Features
